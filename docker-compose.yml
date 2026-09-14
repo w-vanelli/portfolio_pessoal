@@ -1,0 +1,3 @@
+# Root compose file including project-specific services
+include:
+  - path: ledger-stream/docker-compose.yml
