@@ -1,0 +1,284 @@
+openapi: 3.0.3
+info:
+  title: LedgerStream API
+  description: >
+    High-reliability financial settlement and asynchronous event dispatching engine.
+    Designed for SaaS B2B platforms requiring atomic idempotency, two-phase transactional
+    file staging compensation, and fault-tolerant AMQP messaging.
+  version: 1.0.0
+  contact:
+    name: Wellington Vanelli
+    email: wvanelli@gmail.com
+    url: https://github.com/w-vanelli/ledger-stream
+
+servers:
+  - url: http://localhost:8080
+    description: Local development environment
+
+tags:
+  - name: Settlements
+    description: Core financial settlement ingestion and reconciliation operations
+  - name: Audit
+    description: Immutable audit trail inspection for compliance and tracing
+
+paths:
+  /api/v1/settlements:
+    post:
+      tags:
+        - Settlements
+      summary: Ingest settlement event with strict idempotency
+      description: >
+        Ingests a financial settlement record with an optional attachment. Enforces atomic idempotency
+        via the `X-Idempotency-Key` header. Implements two-phase staging storage with transactional
+        compensation to eliminate orphan storage files in case of RDBMS rollback.
+      parameters:
+        - name: X-Idempotency-Key
+          in: header
+          required: true
+          description: Unique client-generated key (UUID v4) guaranteeing idempotent execution.
+          schema:
+            type: string
+            format: uuid
+            example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - metadata
+              properties:
+                metadata:
+                  $ref: '#/components/schemas/SettlementIngestRequest'
+                attachment:
+                  type: string
+                  format: binary
+                  description: Optional binary receipt/invoice (PDF, PNG, JPG).
+      responses:
+        '201':
+          description: Settlement created and queued for dispatching.
+          headers:
+            Location:
+              schema:
+                type: string
+              description: URI of the newly created settlement resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementResponse'
+        '200':
+          description: Idempotent replay - settlement was previously processed with this idempotency key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementResponse'
+        '400':
+          description: Invalid request payload or missing idempotency key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Idempotency conflict - payload checksum mismatch for the same key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal processing failure with executed rollback compensation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/settlements/{id}:
+    get:
+      tags:
+        - Settlements
+      summary: Retrieve settlement by identifier
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Numeric internal settlement ID.
+          schema:
+            type: integer
+            format: int64
+            example: 1001
+      responses:
+        '200':
+          description: Settlement details retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementResponse'
+        '404':
+          description: Settlement not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/settlements/idempotency/{key}:
+    get:
+      tags:
+        - Settlements
+      summary: Query settlement by idempotency key
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: The unique idempotency UUID.
+          schema:
+            type: string
+            format: uuid
+            example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+      responses:
+        '200':
+          description: Settlement found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementResponse'
+        '404':
+          description: No settlement recorded under this key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/settlements/{id}/audit:
+    get:
+      tags:
+        - Audit
+      summary: Retrieve settlement audit trail
+      description: Returns the immutable lifecycle history of status changes and dispatch attempts.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Audit log history.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLogEntry'
+
+components:
+  schemas:
+    SettlementIngestRequest:
+      type: object
+      required:
+        - accountId
+        - currency
+        - amount
+        - settlementType
+      properties:
+        accountId:
+          type: string
+          example: "ACC-US-9842"
+          description: Identifier of the merchant or tenant account.
+        currency:
+          type: string
+          example: "USD"
+          minLength: 3
+          maxLength: 3
+        amount:
+          type: number
+          format: double
+          example: 1450.75
+          minimum: 0.01
+        settlementType:
+          type: string
+          enum: [CARD_PAYOUT, WIRE_TRANSFER, INVOICE_SETTLEMENT, CHARGEBACK_ADJUSTMENT]
+          example: "INVOICE_SETTLEMENT"
+        description:
+          type: string
+          example: "Monthly recurring SaaS license payout batch #84"
+          maxLength: 255
+
+    SettlementResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1001
+        idempotencyKey:
+          type: string
+          format: uuid
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        accountId:
+          type: string
+          example: "ACC-US-9842"
+        currency:
+          type: string
+          example: "USD"
+        amount:
+          type: number
+          format: double
+          example: 1450.75
+        status:
+          type: string
+          enum: [STAGED, COMMITTED, DISPATCHED, FAILED, COMPENSATED]
+          example: "COMMITTED"
+        hasAttachment:
+          type: boolean
+          example: true
+        attachmentFileName:
+          type: string
+          example: "invoice-84.pdf"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    AuditLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        settlementId:
+          type: integer
+          format: int64
+        previousStatus:
+          type: string
+          example: "STAGED"
+        newStatus:
+          type: string
+          example: "COMMITTED"
+        eventDetails:
+          type: string
+          example: "Transactional commit completed; file promoted from staging to permanent storage."
+        timestamp:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+          example: 400
+        error:
+          type: string
+          example: "Bad Request"
+        message:
+          type: string
+          example: "Missing required header: X-Idempotency-Key"
+        path:
+          type: string
+          example: "/api/v1/settlements"

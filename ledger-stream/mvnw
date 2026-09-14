@@ -1,0 +1,37 @@
+#!/bin/sh
+# ----------------------------------------------------------------------------
+# Maven Wrapper Script for UNIX
+# ----------------------------------------------------------------------------
+
+set -e
+
+PRG="$0"
+while [ -h "$PRG" ]; do
+  ls=$(ls -ld "$PRG")
+  link=$(expr "$ls" : '.*-> \(.*\)$')
+  if expr "$link" : '/.*' > /dev/null; then
+    PRG="$link"
+  else
+    PRG="$(dirname "$PRG")/$link"
+  fi
+done
+MAVEN_PROJECTBASEDIR="$(cd "$(dirname "$PRG")" && pwd)"
+
+WRAPPER_PROP_FILE="$MAVEN_PROJECTBASEDIR/.mvn/wrapper/maven-wrapper.properties"
+DIST_URL=$(grep "^distributionUrl=" "$WRAPPER_PROP_FILE" | cut -d'=' -f2)
+
+MVN_USER_HOME="$HOME/.m2/wrapper/dists"
+MVN_DIST_DIR="$MVN_USER_HOME/apache-maven-3.9.9"
+MVN_EXE="$MVN_DIST_DIR/bin/mvn"
+
+if [ ! -x "$MVN_EXE" ]; then
+  mkdir -p "$MVN_USER_HOME"
+  echo "Downloading Maven from $DIST_URL ..."
+  curl -sSL "$DIST_URL" -o "$MVN_USER_HOME/maven.zip"
+  unzip -q "$MVN_USER_HOME/maven.zip" -d "$MVN_USER_HOME"
+  mv "$MVN_USER_HOME"/apache-maven-3.9.9* "$MVN_DIST_DIR"
+  rm "$MVN_USER_HOME/maven.zip"
+  chmod +x "$MVN_EXE"
+fi
+
+exec "$MVN_EXE" "$@"

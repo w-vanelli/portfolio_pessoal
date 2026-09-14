@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ledgerstream-postgres
+    environment:
+      POSTGRES_DB: ledgerstream
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger_secret_pwd
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger -d ledgerstream"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ledgerstream-network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: ledgerstream-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"     # AMQP protocol
+      - "15672:15672"   # Management Web UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ledgerstream-network
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+
+networks:
+  ledgerstream-network:
+    driver: bridge
