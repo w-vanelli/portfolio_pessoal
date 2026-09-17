@@ -191,10 +191,10 @@ components:
           minLength: 3
           maxLength: 3
         amount:
-          type: number
-          format: double
-          example: 1450.75
-          minimum: 0.01
+          type: string
+          example: "1450.75"
+          pattern: '^\d+(\.\d{1,2})?$'
+          description: Monetary amount in string format to prevent floating-point precision loss. Matches DB NUMERIC(15,2).
         settlementType:
           type: string
           enum: [CARD_PAYOUT, WIRE_TRANSFER, INVOICE_SETTLEMENT, CHARGEBACK_ADJUSTMENT]
@@ -222,9 +222,8 @@ components:
           type: string
           example: "USD"
         amount:
-          type: number
-          format: double
-          example: 1450.75
+          type: string
+          example: "1450.75"
         status:
           type: string
           enum: [STAGED, COMMITTED, DISPATCHED, FAILED, COMPENSATED]

@@ -32,3 +32,24 @@ target/
 /storage/
 *.tmp
 *.log
+
+### AI tooling & reverse engineering scaffolding (Reversa, local assistant rules) ###
+.reversa/
+.kiro/
+.agents/
+.amazonq/
+.claude/
+.clinerules
+.cursorrules
+.roorules
+.windsurfrules
+.github/copilot-instructions.md
+AGENTS.md
+CLAUDE.md
+CONVENTIONS.md
+GEMINI.md
+
+### Environment & local credentials ###
+.env
+.env.*
+!.env.example

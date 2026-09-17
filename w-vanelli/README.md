@@ -32,13 +32,15 @@ Senior Backend Java Engineer with **18+ years of hands-on experience** architect
 ## 🌟 Featured Project
 
 ### [LedgerStream: Idempotent Event & Settlement Dispatcher](https://github.com/w-vanelli/ledger-stream)
-> *A high-reliability financial settlement engine built in Spring Boot 3.4 and Java 21 designed to process webhook events and asynchronous billing records with strict idempotency, two-phase file staging compensation, and RabbitMQ dispatching.*
+> *A high-reliability financial settlement engine built in Spring Boot 3.4 and Java 21 designed to register and dispatch webhook events and asynchronous billing records. Currently in Phase 1 (Scaffold & Contracts), establishing the foundation for strict idempotency, two-phase file staging compensation, and RabbitMQ dispatching.*
 
-- **Key Engineering Highlights:**
-  - **Idempotency Guarantee:** Atomic conditional database constraints on PostgreSQL preventing race conditions under high-throughput concurrent bursts.
-  - **Two-Phase Compensating Storage:** Staging attachments in local/cloud storage tied directly to transactional database commits; automatic rollback compensations prevent orphan storage files.
-  - **Resilient AMQP Pipeline:** RabbitMQ dispatcher featuring Dead Letter Exchanges (DLX), exponential backoff retries, and Circuit Breakers.
-  - **Rock-Solid Test Coverage:** 100% end-to-end integration and concurrency safety verified using **Testcontainers** (PostgreSQL + RabbitMQ).
+- **Implemented & Validated (Phase 1):**
+  - **Idempotency Contracts & Schema:** Atomic conditional database constraints on PostgreSQL to prevent race conditions, documented via OpenAPI 3.0.
+  - **Relational Integrity:** Flyway migrations featuring cascade deletions and audit log structures.
+- **Planned for Phase 2 (Business Logic & Resilience):**
+  - **Two-Phase Compensating Storage:** Staging attachments tied to RDBMS commits with automatic rollback compensations.
+  - **Resilient AMQP Pipeline:** RabbitMQ dispatcher with Dead Letter Exchanges (DLX) and Circuit Breakers.
+  - **Testcontainers Coverage:** End-to-end integration and concurrency safety testing.
 
 ---
 

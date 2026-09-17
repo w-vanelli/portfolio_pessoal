@@ -54,11 +54,15 @@ sequenceDiagram
     end
 ```
 
-### Key Architectural Pillars
-- **Strict Idempotency Barrier:** Enforced directly in PostgreSQL via `UNIQUE (idempotency_key)` and SHA-256 payload checksum comparison. Subsequent duplicate requests safely return the existing resource without executing side-effects.
-- **Two-Phase Compensating Storage:** Physical attachments are staged in temporary storage (`java.nio.file`) isolated from the transactional lifecycle. Only upon a verified database commit is the file atomically promoted to permanent storage. If the transaction fails, a registered compensation routine guarantees immediate deletion of temporary artifacts.
-- **Asynchronous AMQP Dispatcher:** Offloads event notification to RabbitMQ with configured Dead-Letter Exchanges (DLX), exponential backoff retries, and Circuit Breaker isolation via Resilience4j.
+### Implemented in Phase 1 (Foundation & Contracts)
+- **Strict Idempotency Barrier (Schema):** Enforced directly in PostgreSQL via `UNIQUE (idempotency_key)` and SHA-256 payload checksum comparison.
 - **Contract-First Documentation:** Complete REST specification modeled in [docs/openapi.yaml](docs/openapi.yaml).
+- **Relational Integrity:** Initial Flyway migrations set up cascade constraints and tables for audit logs.
+
+### Planned for Phase 2 (Business Logic & Resilience)
+- **Two-Phase Compensating Storage:** Physical attachments will be staged in temporary storage (`java.nio.file`) isolated from the transactional lifecycle, and automatically rolled back on database failure.
+- **Asynchronous AMQP Dispatcher:** Will offload event notification to RabbitMQ with configured Dead-Letter Exchanges (DLX), exponential backoff retries, and Circuit Breaker isolation via Resilience4j.
+- **Strict Idempotency Execution:** Java implementation for conflict handling and safe duplicate replays.
 
 ---
 
@@ -73,29 +77,23 @@ sequenceDiagram
 docker compose up -d
 ```
 
-Verify that services are running and healthy:
+Verify that services are running and healthy (Wait for startup completion):
 ```bash
 docker compose ps
 ```
 - **PostgreSQL:** `localhost:5432` (DB: `ledgerstream`, User: `ledger`)
 - **RabbitMQ Management UI:** [http://localhost:15672](http://localhost:15672) (User: `guest` / `guest`)
 
-### 2. Run the Application
+### 2. Build the Application
 ```bash
-./mvnw spring-boot:run
+./mvnw clean compile
 ```
-Or via Maven wrapper on Windows PowerShell:
-```powershell
-.\mvnw.cmd spring-boot:run
-```
-
-The application starts on `http://localhost:8080`.
 
 ---
 
-## 🧪 Testing Strategy
+## 🧪 Testing Strategy (Planned for Phase 2)
 
-The test suite prioritizes high-risk failure scenarios:
+The test suite will prioritize high-risk failure scenarios:
 - **Multithreaded Concurrency Tests:** Simulates 50 simultaneous threads issuing identical requests to verify zero duplicate records and thread confinement.
 - **Rollback Compensation Verification:** Forces artificial database constraints to prove physical staging files are deleted without leaving storage orphans.
 - **Full-Stack Integration:** Uses **Testcontainers** to dynamically spin up isolated PostgreSQL and RabbitMQ instances during `mvn test`.
