@@ -1,6 +1,6 @@
 # Estado do portfólio
 
-Fase: Semana 1 (Fundação & Contratos Técnicos) concluída com sucesso. Próxima etapa: Semana 2 (Domínio, JPA e Storage com Compensação).
+Fase: Semana 2 - Incremento 1 (Domínio, Persistência JPA e Contrato de Storage) concluído com sucesso. Próxima etapa: Semana 2 - Incremento 2 (Implementação do StagingStorageService com NIO.2 e Testcontainers).
 
 ## Objetivo e restrições
 
@@ -33,26 +33,57 @@ Fase: Semana 1 (Fundação & Contratos Técnicos) concluída com sucesso. Próxi
 - **Stack do Projeto Principal:** Java 21 + Spring Boot 3.4 + PostgreSQL + RabbitMQ + Docker/Testcontainers.
 - **Idioma dos artefatos públicos:** Documentação e código em Inglês; bio e destaques no README de perfil bilíngues.
 
-## Incremento atual (Correções Pós-Auditoria da Semana 1)
+## Incremento atual (Semana 2 - Incremento 1: Domínio, Persistência JPA e Contrato de Storage)
 
-Conclusão da **Semana 1: Fundação & Contratos Técnicos**:
-1. Repositório de perfil criado e alinhado para não prometer implementações ainda não finalizadas.
-2. Scaffold do projeto âncora criado (`pom.xml`, `docker-compose.yml`, `openapi.yaml`, `V1__init_ledger.sql`, `application.yml`, scripts Maven).
-3. **Melhorias Aplicadas e Validadas:**
-   - Limpeza das configurações Maven corporativas (`settings.xml`), restabelecendo o acesso padrão ao Maven Central sem referências ou credenciais ao antigo empregador.
-   - Correção do tipo monetário no OpenAPI para `string` (Regex decimal), prevenindo perda de precisão flutuante e alinhando com o banco `NUMERIC(15,2)`. Negativos não são permitidos. Representações equivalentes exigirão normalização em código futuro.
-   - O workflow de CI (`ci.yml`) foi movido para a raiz (`.github/workflows/`), ajustando caminhos para o `ledger-stream` e validando apenas compilação.
+Conclusão do **Primeiro Incremento da Semana 2**:
+1. **Domínio e Value Objects:**
+   - Implementado Value Object `MonetaryAmount` com validação estrita a `NUMERIC(15,2)` (máx. 13 dígitos inteiros e 2 decimais). Conversão direta `String -> BigDecimal` sem `double`. Rejeição de precisão excedente e de valores negativos.
+   - Normalização canônica obrigatória definida via `setScale(2, RoundingMode.UNNECESSARY).toPlainString()` para cálculo estável de checksum SHA-256 de payload na idempotência.
+   - Registrada pendência de domínio para regras de negócio sobre valor zero (`0.00`) e representação de débitos em estornos (`CHARGEBACK_ADJUSTMENT`).
+   - Entidades JPA `SettlementEvent` e `SettlementAttachment` com ciclo de vida mapeado para enums `SettlementStatus`, `SettlementType` e `AttachmentStatus`.
+2. **Persistência JPA:**
+## Incremento atual (Semana 2 - Incremento 2: StagingStorageService com NIO.2 e Testcontainers)
 
-## Entregas verificadas
+Conclusão do **Segundo Incremento da Semana 2**:
+1. **Regras Monetárias e Domínio:**
+   - Implementadas regras `amount > 0` e precisão obrigatória via `NUMERIC(15,2)` e validação no domínio. Valores em zero e negativo são terminantemente rejeitados via código e Migration V2 (constraint). Normalização de decimais ("1" para "1.00").
+   - Corrigida a afirmação sobre a regex monetária: atualizado no OpenAPI e domínio para `^(0|[1-9]\d{0,12})(\.\d{1,2})?$`.
+2. **Mecânica de Chargeback:**
+   - Entidade `SettlementEvent` mapeada com coluna FK `original_settlement_id` (migration V2). O ajuste de Chargeback nunca modifica ou apaga o original.
+3. **Storage NIO.2 (Staging):**
+   - Implementado `StagingStorageServiceImpl` com `java.nio.file`: método `compensateStaging` com `throws IOException`, verificações de Path Traversal, fallback ao não suportar `ATOMIC_MOVE`, e posse de `InputStreams` pelos clientes.
+4. **Testes e Infraestrutura:**
+   - Maven configurado para isolar Unit (`Surefire`) vs. Integration (`Failsafe`). Testcontainers com PostgreSQL 16 integrado no perfil `integration-test`.
+   - Workflow CI (`ci.yml`) ajustado para cobrir `verify`.
 
-- Confirmação formal de originalidade atestando que não há uso de funcionalidades confidenciais em `portfolio-context/originalidade.md`.
-- Compilação local (`mvnw clean compile`) **aprovada com sucesso**, resolvendo artefatos diretamente do Maven Central. (Nota: O CI remoto do GitHub Actions foi configurado mas ainda não foi ativado remotamente).
-- Documento de rastreio de melhorias criado em `ledger-stream/docs/improvement-integration.md`.
+## Entregas verificadas e Limitações
+
+- Compilação e execução de testes unitários localmente (**49 testes executados com 0 falhas**).
+- *Limitação / Impedimento Confirmado:* **Docker Indisponível**, impedindo a execução de testes de integração com Testcontainers na máquina host do ambiente. O Incremento 2 está totalmente implementado, mas com validação de integração pendente de container.
+## Incremento atual (Semana 2 - Incremento 3: Serviço de Aplicação e Transações)
+
+Conclusão do **Terceiro Incremento da Semana 2**:
+1. **Semântica de Estados:**
+   - Adicionada matriz rigorosa de transição ao `SettlementEvent` (`STAGED -> COMMITTED -> DISPATCHED` e fluxos de compensação). Transições proibidas lançam `IllegalStateException`.
+2. **Fronteiras Transacionais e Recuperação:**
+   - Implementado `SettlementApplicationService` isolando a transação JPA da promoção de I/O.
+   - O `promoteToPermanent` é chamado de forma síncrona somente após confirmação do commit (`persist` isolado via `@Transactional`).
+   - Arquivos órfãos de transações falhas ou colisões concorrentes (`DataIntegrityViolationException`) são devidamente compensados via `stagingStorageService.compensateStaging`.
+3. **Idempotência e Conflitos:**
+   - `ChecksumGenerator` garante integridade do payload usando SHA-256 no accountId, currency, amount, settlementType, description, originalSettlementId e dados de attachment.
+   - Recuperação via leitura antes da escrita e no fallback de concorrência.
+4. **Regras de Chargeback:**
+   - Validação delegada ao serviço: chargeback exige referência a settlement original (não-chargeback), mantendo mesma conta e moeda. Original permanece inalterado.
+
+## Entregas verificadas e Limitações
+
+- Compilação e execução de testes unitários localmente (**59 testes executados com 0 falhas**).
+- Validação de Integração com **Testcontainers (PostgreSQL 16)** executada com sucesso. Os testes confirmam:
+  - Criação do schema (Flyway V1 e V2) no banco real;
+  - Validações de Constraints (`CHECK amount > 0`) no nível do banco rejeitando dados inválidos independentemente do domínio;
+  - Proteção de `UNIQUE` constraint da chave de idempotência;
+  - Relacionamentos em cascata operando como esperado (`ON DELETE CASCADE`).
 
 ## Pendências e próximo passo
 
-Iniciar a **Semana 2: Domínio, Persistência JPA & Storage com Compensação Transacional**:
-1. Criação das entidades `SettlementEvent` e `SettlementAttachment` e repositórios Spring Data JPA. (Validação numérica backend inclusa).
-2. Implementação do `StagingStorageService` com `java.nio.file` e lógica de confirmação/compensação pós-commit.
-3. Criação de testes unitários automatizados. A ativação da fase de `test` no CI remoto ocorrerá junto desta entrega.
-*(Garantias de infraestrutura como Outbox, Consumidor Idempotente e reconciliação de Cleanup de arquivos estão mapeadas para o futuro).*
+4. *(Outbox Transacional, Consumidor RabbitMQ e Reconciliação pós-crash continuam preservados para as etapas seguintes).*

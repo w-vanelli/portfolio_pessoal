@@ -193,8 +193,13 @@ components:
         amount:
           type: string
           example: "1450.75"
-          pattern: '^\d+(\.\d{1,2})?$'
-          description: Monetary amount in string format to prevent floating-point precision loss. Matches DB NUMERIC(15,2).
+          pattern: '^(0|[1-9]\d{0,12})(\.\d{1,2})?$'
+          description: >
+            Monetary amount as a string decimal. Must be strictly positive (> 0).
+            Permitted range: 0.01 to 9,999,999,999,999.99 (NUMERIC(15,2)).
+            Direct String-to-BigDecimal conversion prevents floating-point precision loss.
+            Representations "1", "1.0", and "1.00" are equivalent after normalization.
+            The regex pattern is a format guard; the domain enforces positivity and range.
         settlementType:
           type: string
           enum: [CARD_PAYOUT, WIRE_TRANSFER, INVOICE_SETTLEMENT, CHARGEBACK_ADJUSTMENT]
