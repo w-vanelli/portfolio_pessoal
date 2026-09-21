@@ -19,6 +19,7 @@ class SettlementApplicationServiceIT extends AbstractIntegrationTest {
     @Autowired SettlementApplicationService service;
     @Autowired SettlementEventRepository events;
     @Autowired SettlementAttachmentRepository attachments;
+    @Autowired SettlementOutboxRepository outbox;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactionManager;
 
@@ -30,6 +31,10 @@ class SettlementApplicationServiceIT extends AbstractIntegrationTest {
     @Test void commitsEventAndPromotedAttachmentMetadata() throws Exception {
         var event = service.registerSettlement(command(UUID.randomUUID(), "1", "proof"));
         assertThat(events.findById(event.getId()).orElseThrow().getStatus()).isEqualTo(SettlementStatus.COMMITTED);
+        var outboxEntry = outbox.findBySettlementId(event.getId()).orElseThrow();
+        assertThat(outboxEntry.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(outboxEntry.getEventType()).isEqualTo("settlement.accepted");
+        assertThat(outboxEntry.getPayloadChecksum()).isEqualTo(event.getPayloadChecksum());
         var attachment = attachments.findBySettlementEventId(event.getId()).getFirst();
         assertThat(attachment.getStatus()).isEqualTo(AttachmentStatus.PERMANENT);
         assertThat(Path.of(attachment.getStoragePath())).hasContent("proof");
@@ -54,6 +59,8 @@ class SettlementApplicationServiceIT extends AbstractIntegrationTest {
             assertThat(ids).hasSize(1);
             Long id = ids.iterator().next();
             assertThat(jdbc.queryForObject("SELECT count(*) FROM settlement_events WHERE idempotency_key = ?", Long.class, key))
+                    .isEqualTo(1L);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM settlement_outbox WHERE settlement_id = ?", Long.class, id))
                     .isEqualTo(1L);
             var files = attachments.findBySettlementEventId(id);
             assertThat(files).hasSize(1);

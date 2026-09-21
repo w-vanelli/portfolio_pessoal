@@ -6,7 +6,9 @@ import com.wvanelli.ledgerstream.domain.SettlementAttachment;
 import com.wvanelli.ledgerstream.domain.SettlementEvent;
 import com.wvanelli.ledgerstream.domain.SettlementStatus;
 import com.wvanelli.ledgerstream.domain.SettlementType;
+import com.wvanelli.ledgerstream.domain.SettlementOutboxEntry;
 import com.wvanelli.ledgerstream.repository.SettlementEventRepository;
+import com.wvanelli.ledgerstream.repository.SettlementOutboxRepository;
 import com.wvanelli.ledgerstream.storage.StagingStorageService;
 import com.wvanelli.ledgerstream.storage.StagingTicket;
 import org.slf4j.Logger;
@@ -28,12 +30,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class SettlementApplicationService {
     private static final Logger log = LoggerFactory.getLogger(SettlementApplicationService.class);
     private final SettlementEventRepository repository;
+    private final SettlementOutboxRepository outboxRepository;
     private final StagingStorageService stagingStorageService;
     private final TransactionTemplate transaction;
 
     public SettlementApplicationService(SettlementEventRepository repository,
-            StagingStorageService stagingStorageService, PlatformTransactionManager transactionManager) {
+            SettlementOutboxRepository outboxRepository, StagingStorageService stagingStorageService,
+            PlatformTransactionManager transactionManager) {
         this.repository = repository;
+        this.outboxRepository = outboxRepository;
         this.stagingStorageService = stagingStorageService;
         this.transaction = new TransactionTemplate(transactionManager);
     }
@@ -190,7 +195,11 @@ public class SettlementApplicationService {
         // We explicitly transition it to COMMITTED within the transaction.
         event.transitionTo(SettlementStatus.COMMITTED);
         
-        return repository.saveAndFlush(event);
+        SettlementEvent saved = repository.saveAndFlush(event);
+        // The outbox row must be part of this same transaction. If this write fails,
+        // acceptance rolls back and the staged attempt is eligible for compensation.
+        outboxRepository.saveAndFlush(new SettlementOutboxEntry(saved));
+        return saved;
     }
 
     private void cleanupStaging(StagingTicket ticket) {

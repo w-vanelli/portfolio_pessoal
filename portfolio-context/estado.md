@@ -81,15 +81,14 @@ permanece como referência de planejamento; não ampliar escopo por aparência d
 - `./mvnw clean verify --no-transfer-progress` (com settings locais de rede): compilação e
   empacotamento aprovados; os mesmos 61 testes aprovados. Failsafe terminou com **19 erros de
   inicialização**, pois não encontrou Docker nem `/var/run/docker.sock`. Nenhum comportamento
-  de integração PostgreSQL foi validado nesta execução. O build completo não está aprovado.
+  de integração PostgreSQL foi validado nesta execução. O build completo não foi aprovado nesse ambiente local.
 - `git diff --check`: aprovado.
 - Wrapper Windows: corrigido por inspeção, ainda não executado em Windows.
-- Último CI remoto inspecionado antes desta publicação: falha do commit-base. Consultar o Actions do novo commit para o resultado da publicação; não inferir sucesso remoto dos testes locais.
+- CI remoto do commit `fcefe91`: aprovado em [35601974165](https://github.com/w-vanelli/portfolio_pessoal/actions/runs/35601974165), com 61 testes unitários e 19 de integração sem falhas. Esta evidência é do baseline anterior à outbox; o novo commit exige sua própria execução.
 
 ## Limitações e próximo incremento mínimo
 
-- Executar os 19 testes de integração em ambiente com Docker antes de declarar consolidação concluída.
-  Eles incluem 4 novos testes do serviço (commit/metadados, concorrência, chargeback e transação ambiente).
+- Baseline consolidado validado remotamente. Executar o CI da outbox após publicação para verificar V3 e as asserções de integração atualizadas.
 - O checksum corrigido é incompatível com o anterior: registros existentes não são regravados;
   retries de chaves antigas podem retornar conflito. Preservar datasets retidos e planejar migração
   validada se forem necessários; não aceitar automaticamente o checksum antigo que omitia o anexo.
@@ -98,5 +97,22 @@ permanece como referência de planejamento; não ampliar escopo por aparência d
 - Falha entre promoção e atualização de metadados deixa referência STAGED, mas o destino é derivável
   do mesmo UUID. Ainda não há worker que reconcilie esse caso ou commit desconhecido.
 - Validações unitárias com callbacks de transação simulados não demonstram recuperação após crash.
-- Próximo avanço funcional, após integração aprovada: **outbox gravada na transação de aceitação**.
-  Não publicar diretamente no RabbitMQ como atalho. Até existir mensageria, o fluxo termina em COMMITTED.
+- Próximo avanço funcional implementado localmente: **outbox gravada na transação de aceitação**.
+  Migration V3, `SettlementOutboxEntry`, `SettlementOutboxRepository` e testes de integração
+  foram adicionados. A linha é única por settlement, nasce `PENDING` e não representa publicação.
+  Não publicar diretamente no RabbitMQ como atalho. Até existir o dispatcher, o fluxo termina em
+  COMMITTED com uma intenção de publicação persistida.
+
+## Outbox — estado local desta continuidade
+
+- V3 cria `settlement_outbox` com FK para o evento, unicidade por settlement, status, tentativas,
+  `available_at`, timestamps e último erro.
+- A entrada é escrita na mesma transação que grava o evento; falha no outbox deve desfazer a
+  aceitação completa.
+- O repositório já oferece consulta de lote por status e horário para o dispatcher futuro,
+  sem alegar locking ou publicação concorrente nesta etapa.
+- `PUBLISHED`/`FAILED` e métodos de atualização existem no modelo para a próxima etapa, mas
+  nenhum componente os aciona ainda.
+
+- Publicação da outbox autorizada pelo usuário; a tentativa anterior não foi executada por limite da revisão automática do conector. Retomada pelo mesmo conector, preservando o histórico.
+- Validação local da outbox: 61 testes unitários/filesystem aprovados e testes de integração compilados. A integração da outbox aguarda execução do novo commit no CI.

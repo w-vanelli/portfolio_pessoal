@@ -68,12 +68,22 @@ uses one explicitly started PostgreSQL instance across the cached Spring test co
 transaction tests use Spring completion callbacks with simulated outcomes; they do not replace
 real PostgreSQL integration or prove recovery after process termination.
 
+### Increment 4 — transactional outbox
+
+Implemented locally in this continuation: migration V3 creates `settlement_outbox` with one
+unique row per accepted settlement, `PENDING` status, attempt metadata and dispatch scheduling
+fields. `SettlementApplicationService` writes the row through `SettlementOutboxRepository`
+inside the same transaction as the event and attachment reference. A failure to write the
+outbox therefore rolls back acceptance. The row stores immutable publication identity (event
+ID, idempotency key, event type and checksum); it does not claim broker publication.
+
+No publisher, consumer, broker confirmation or `DISPATCHED` transition exists yet.
+
 ## 3. Messaging and resilience — next macro phase
 
 After the current service passes `clean verify` with Docker:
 
-1. Persist an outbox entry in the same transaction as acceptance.
-2. Add a dispatcher with broker confirmations, required routing verification, ready-attachment
+1. Add a dispatcher with broker confirmations, required routing verification, ready-attachment
    checks and retries. Only then transition to `DISPATCHED`.
 3. Implement an idempotent consumer and failure handling.
 4. Implement state-aware reconciliation for unknown commits and interrupted file operations.

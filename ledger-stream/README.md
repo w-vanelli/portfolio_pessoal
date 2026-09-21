@@ -9,16 +9,17 @@ balances, execute settlement, or promise end-to-end exactly-once delivery.
 - Java 21, Spring Boot 3.4.0, Maven 3.9.9, Spring Data JPA/Hibernate, Flyway and PostgreSQL 16.
 - Positive monetary values from `0.01` to `9999999999999.99`, parsed directly from decimal
   strings into `BigDecimal`. Excess precision is rejected; `1`, `1.0` and `1.00` normalize to `1.00`.
-- Event/attachment entities, unique idempotency keys, and migrations V1/V2.
+- Event/attachment entities, unique idempotency keys, and migrations V1/V2/V3.
 - Application service for acceptance, equivalent replays, conflicts and chargeback validation.
 - NIO staging with SHA-256 of the bytes written, exclusive attempt directories, mandatory
   atomic promotion and observable cleanup failures.
+- Transactional outbox row (`settlement_outbox`) written with each accepted event. It records
+  a durable `PENDING` publication intent; no broker call is made by the acceptance service.
 - Unit/filesystem tests and PostgreSQL integration tests, separated by Surefire/Failsafe.
 
 The REST endpoints in [OpenAPI](docs/openapi.yaml) are **planned contracts**; there is no
 controller yet. RabbitMQ 3.13 is available in Compose and Spring AMQP is a dependency,
-but there is no publisher, consumer, outbox or crash-reconciliation worker. The current
-application flow ends at `COMMITTED`.
+but there is no publisher, consumer or crash-reconciliation worker. The current application flow ends at `COMMITTED` with a durable `PENDING` outbox row.
 
 ## Acceptance and file lifecycle
 
@@ -29,7 +30,8 @@ application flow ends at `COMMITTED`.
    current attempt's staged file.
 3. In an explicit database transaction, validate chargeback references and insert the event
    and attachment reference. Database uniqueness arbitrates concurrent inserts.
-4. After confirmed commit, promote the file with `ATOMIC_MOVE` and record its permanent path
+4. In the same acceptance transaction, insert one unique `PENDING` outbox row for the event.
+5. After confirmed commit, promote the file with `ATOMIC_MOVE` and record its permanent path
    and attachment status in a second transaction. A promotion or metadata-update failure
    leaves the accepted event intact for future reconciliation.
 
@@ -59,7 +61,7 @@ remain until a future reconciler can make a safe, state-aware decision; TTL alon
 
 Allowed transitions: `STAGED → COMMITTED`, `STAGED → FAILED`, `STAGED → COMPENSATED`,
 `FAILED → COMPENSATED`, `COMMITTED → DISPATCHED`. `DISPATCHED` and `COMPENSATED` are terminal.
-The application service does not yet produce dispatch or durable preparation-failure records.
+The application service produces one durable `PENDING` outbox row per accepted event, but does not yet publish it or transition the settlement to `DISPATCHED`.
 
 Chargebacks are new positive-valued events with their own keys. They reference an existing
 non-chargeback event of the same account and currency, without modifying it. There is no
@@ -98,7 +100,7 @@ and limitations. Historical test totals are not evidence that a fresh checkout p
 The remote baseline `8edb762` failed in Maven bootstrap before compiling; subsequent local
 changes require a successful Actions run for their own commit; consult the workflow result rather than inferring CI success from local unit tests.
 
-The next phase remains transactional outbox, followed by resilient messaging, an idempotent
+The next phase is an outbox dispatcher with broker confirmations and required-routing checks, followed by resilient messaging, an idempotent
 consumer, state-aware crash recovery and interview failure demonstrations. Outbox entries
 must be written in the acceptance transaction; direct publication is not an interim substitute.
 

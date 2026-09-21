@@ -7,6 +7,7 @@ import com.wvanelli.ledgerstream.domain.SettlementType;
 import com.wvanelli.ledgerstream.repository.SettlementEventRepository;
 import com.wvanelli.ledgerstream.storage.StagingStorageService;
 import com.wvanelli.ledgerstream.storage.StagingTicket;
+import com.wvanelli.ledgerstream.repository.SettlementOutboxRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 import java.nio.file.Path;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -39,6 +41,9 @@ class SettlementApplicationServiceTest {
     @Mock
     private StagingStorageService stagingStorageService;
 
+    @Mock
+    private SettlementOutboxRepository outboxRepository;
+
     private SettlementApplicationService service;
 
     private TestTransactionManager transactionManager;
@@ -48,7 +53,7 @@ class SettlementApplicationServiceTest {
     @BeforeEach
     void setUp() {
         transactionManager = new TestTransactionManager();
-        service = new SettlementApplicationService(repository, stagingStorageService, transactionManager);
+        service = new SettlementApplicationService(repository, outboxRepository, stagingStorageService, transactionManager);
         key = UUID.randomUUID();
         command = new RegisterSettlementCommand(
                 key, "ACC-123", "USD", "100.00", SettlementType.CARD_PAYOUT,
@@ -68,7 +73,8 @@ class SettlementApplicationServiceTest {
         when(stagingStorageService.stage(any(), any(), any())).thenReturn(ticket);
         when(repository.findByIdempotencyKey(key)).thenReturn(Optional.empty());
 
-        when(repository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.saveAndFlush(any())).thenAnswer(invocation -> persisted(invocation.getArgument(0)));
+        when(outboxRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(stagingStorageService.promoteToPermanent("temp/file.txt")).thenAnswer(invocation -> {
             assertThat(transactionManager.committed).isTrue();
             return Path.of("permanent/file.txt");
@@ -181,7 +187,9 @@ class SettlementApplicationServiceTest {
         
         SettlementEvent mockSavedEvent = new SettlementEvent(key, "dummy", "ACC-123", "USD", new MonetaryAmount("100.00"), SettlementType.CARD_PAYOUT, "Test");
         mockSavedEvent.transitionTo(SettlementStatus.COMMITTED);
+        ReflectionTestUtils.setField(mockSavedEvent, "id", 1L);
         when(repository.saveAndFlush(any())).thenReturn(mockSavedEvent);
+        when(outboxRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         when(stagingStorageService.promoteToPermanent("temp/file.txt")).thenThrow(new IOException("Disk full"));
 
@@ -232,7 +240,8 @@ class SettlementApplicationServiceTest {
         when(stagingStorageService.stage(any(), any(), any())).thenReturn(
                 new StagingTicket("temp/file.txt", 0, "text/plain", "file.txt", "a".repeat(64)));
         when(repository.findByIdempotencyKey(key)).thenReturn(Optional.empty());
-        when(repository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.saveAndFlush(any())).thenAnswer(invocation -> persisted(invocation.getArgument(0)));
+        when(outboxRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
         transactionManager.failCommit = true;
         assertThatThrownBy(() -> service.registerSettlement(withFile)).isInstanceOf(TransactionSystemException.class);
         verify(stagingStorageService, never()).compensateStaging(any());
@@ -252,7 +261,7 @@ class SettlementApplicationServiceTest {
         new org.springframework.transaction.support.TransactionTemplate(transactionManager)
                 .executeWithoutResult(status -> assertThatThrownBy(() -> service.registerSettlement(command))
                         .isInstanceOf(IllegalStateException.class).hasMessageContaining("outside a transaction"));
-        verifyNoInteractions(repository, stagingStorageService);
+        verifyNoInteractions(repository, outboxRepository, stagingStorageService);
     }
 
     // Exercises Spring's real completion callbacks with simulated commit/rollback outcomes.
@@ -267,5 +276,10 @@ class SettlementApplicationServiceTest {
             committed = true;
         }
         @Override protected void doRollback(DefaultTransactionStatus status) { }
+    }
+
+    private SettlementEvent persisted(SettlementEvent event) {
+        ReflectionTestUtils.setField(event, "id", 1L);
+        return event;
     }
 }
