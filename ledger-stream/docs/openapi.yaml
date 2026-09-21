@@ -2,14 +2,14 @@ openapi: 3.0.3
 info:
   title: LedgerStream API
   description: >
-    High-reliability financial settlement and asynchronous event dispatching engine.
-    Designed for SaaS B2B platforms requiring atomic idempotency, two-phase transactional
-    file staging compensation, and fault-tolerant AMQP messaging.
+    Planned REST contract; controllers are not implemented yet. LedgerStream records
+    settlement events without moving money or calculating balances. The current application
+    service ends at COMMITTED. Outbox, dispatch, consumer and recovery are future phases.
   version: 1.0.0
   contact:
     name: Wellington Vanelli
     email: wvanelli@gmail.com
-    url: https://github.com/w-vanelli/ledger-stream
+    url: https://github.com/w-vanelli/portfolio_pessoal/tree/main/ledger-stream
 
 servers:
   - url: http://localhost:8080
@@ -17,7 +17,7 @@ servers:
 
 tags:
   - name: Settlements
-    description: Core financial settlement ingestion and reconciliation operations
+    description: Planned settlement event ingestion and retrieval
   - name: Audit
     description: Immutable audit trail inspection for compliance and tracing
 
@@ -29,8 +29,9 @@ paths:
       summary: Ingest settlement event with strict idempotency
       description: >
         Ingests a financial settlement record with an optional attachment. Enforces atomic idempotency
-        via the `X-Idempotency-Key` header. Implements two-phase staging storage with transactional
-        compensation to eliminate orphan storage files in case of RDBMS rollback.
+        via the `X-Idempotency-Key` header. Equivalent content includes metadata and attachment
+        bytes. Cleanup is limited to confirmed pre-acceptance rollback; unknown commit outcomes
+        require reconciliation. There is no cross-resource atomic transaction.
       parameters:
         - name: X-Idempotency-Key
           in: header
@@ -57,7 +58,7 @@ paths:
                   description: Optional binary receipt/invoice (PDF, PNG, JPG).
       responses:
         '201':
-          description: Settlement created and queued for dispatching.
+          description: Event durably accepted as COMMITTED; attachment promotion may remain pending.
           headers:
             Location:
               schema:
@@ -86,7 +87,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
-          description: Internal processing failure with executed rollback compensation.
+          description: Processing failure; acceptance outcome may require reconciliation. Retry with the same key and payload.
           content:
             application/json:
               schema:
@@ -204,6 +205,11 @@ components:
           type: string
           enum: [CARD_PAYOUT, WIRE_TRANSFER, INVOICE_SETTLEMENT, CHARGEBACK_ADJUSTMENT]
           example: "INVOICE_SETTLEMENT"
+        originalSettlementId:
+          type: integer
+          format: int64
+          nullable: true
+          description: Required for CHARGEBACK_ADJUSTMENT; references an existing non-chargeback event of the same account and currency. Forbidden for other types.
         description:
           type: string
           example: "Monthly recurring SaaS license payout batch #84"
@@ -231,6 +237,7 @@ components:
           example: "1450.75"
         status:
           type: string
+          description: COMMITTED is durable acceptance, even if files/dispatch remain pending. Future DISPATCHED requires confirmed publication, required routing and ready attachments; it does not imply consumption or settlement.
           enum: [STAGED, COMMITTED, DISPATCHED, FAILED, COMPENSATED]
           example: "COMMITTED"
         hasAttachment:

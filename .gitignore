@@ -41,7 +41,7 @@
 
 # Staging e arquivos temporários locais de storage
 /storage/
-**/storage/
+/ledger-stream/storage/
 *.tmp
 *.log
 

@@ -11,7 +11,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionSystemException;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import java.nio.file.Path;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -35,14 +39,16 @@ class SettlementApplicationServiceTest {
     @Mock
     private StagingStorageService stagingStorageService;
 
-    @InjectMocks
     private SettlementApplicationService service;
 
+    private TestTransactionManager transactionManager;
     private UUID key;
     private RegisterSettlementCommand command;
 
     @BeforeEach
     void setUp() {
+        transactionManager = new TestTransactionManager();
+        service = new SettlementApplicationService(repository, stagingStorageService, transactionManager);
         key = UUID.randomUUID();
         command = new RegisterSettlementCommand(
                 key, "ACC-123", "USD", "100.00", SettlementType.CARD_PAYOUT,
@@ -58,12 +64,22 @@ class SettlementApplicationServiceTest {
                 "Test", null, "file.txt", "text/plain", new ByteArrayInputStream(new byte[0])
         );
 
-        StagingTicket ticket = new StagingTicket("temp/file.txt", 100L, "text/plain", "file.txt");
+        StagingTicket ticket = new StagingTicket("temp/file.txt", 100L, "text/plain", "file.txt", "a".repeat(64));
         when(stagingStorageService.stage(any(), any(), any())).thenReturn(ticket);
         when(repository.findByIdempotencyKey(key)).thenReturn(Optional.empty());
 
-        SettlementEvent mockSavedEvent = new SettlementEvent(key, "dummy", "ACC-123", "USD", new MonetaryAmount("100.00"), SettlementType.CARD_PAYOUT, "Test");
-        when(repository.saveAndFlush(any())).thenReturn(mockSavedEvent);
+        when(repository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(stagingStorageService.promoteToPermanent("temp/file.txt")).thenAnswer(invocation -> {
+            assertThat(transactionManager.committed).isTrue();
+            return Path.of("permanent/file.txt");
+        });
+        when(repository.findById(any())).thenAnswer(invocation -> {
+            SettlementEvent persisted = new SettlementEvent(key, "dummy", "ACC-123", "USD",
+                    new MonetaryAmount("100"), SettlementType.CARD_PAYOUT, "Test");
+            persisted.addAttachment(new com.wvanelli.ledgerstream.domain.SettlementAttachment(
+                    "file.txt", 100L, "text/plain", "temp/file.txt"));
+            return Optional.of(persisted);
+        });
 
         SettlementEvent result = service.registerSettlement(cmdWithFile);
 
@@ -78,7 +94,7 @@ class SettlementApplicationServiceTest {
     @DisplayName("Should return existing settlement if idempotent request has same payload")
     void shouldReturnExistingIdempotent() throws IOException {
         String checksum = ChecksumGenerator.generatePayloadChecksum(
-                "ACC-123", "USD", new MonetaryAmount("100.00"), SettlementType.CARD_PAYOUT, "Test", null, null, null
+                "ACC-123", "USD", new MonetaryAmount("100.00"), SettlementType.CARD_PAYOUT, "Test", null, null, null, null
         );
         SettlementEvent existing = new SettlementEvent(key, checksum, "ACC-123", "USD", new MonetaryAmount("100.00"), SettlementType.CARD_PAYOUT, "Test");
 
@@ -105,7 +121,7 @@ class SettlementApplicationServiceTest {
     @DisplayName("Should compensate staging and recover on concurrent constraint violation")
     void shouldRecoverFromConcurrentConstraintViolation() throws IOException {
         String checksum = ChecksumGenerator.generatePayloadChecksum(
-                "ACC-123", "USD", new MonetaryAmount("100.00"), SettlementType.CARD_PAYOUT, "Test", null, "file.txt", "text/plain"
+                "ACC-123", "USD", new MonetaryAmount("100.00"), SettlementType.CARD_PAYOUT, "Test", null, "file.txt", "text/plain", "a".repeat(64)
         );
         SettlementEvent existing = new SettlementEvent(key, checksum, "ACC-123", "USD", new MonetaryAmount("100.00"), SettlementType.CARD_PAYOUT, "Test");
 
@@ -113,7 +129,7 @@ class SettlementApplicationServiceTest {
                 key, "ACC-123", "USD", "100.00", SettlementType.CARD_PAYOUT,
                 "Test", null, "file.txt", "text/plain", new ByteArrayInputStream(new byte[0])
         );
-        StagingTicket ticket = new StagingTicket("temp/file.txt", 100L, "text/plain", "file.txt");
+        StagingTicket ticket = new StagingTicket("temp/file.txt", 100L, "text/plain", "file.txt", "a".repeat(64));
 
         when(stagingStorageService.stage(any(), any(), any())).thenReturn(ticket);
         
@@ -138,7 +154,7 @@ class SettlementApplicationServiceTest {
                 key, "ACC-123", "USD", "100.00", SettlementType.CARD_PAYOUT,
                 "Test", null, "file.txt", "text/plain", new ByteArrayInputStream(new byte[0])
         );
-        StagingTicket ticket = new StagingTicket("temp/file.txt", 100L, "text/plain", "file.txt");
+        StagingTicket ticket = new StagingTicket("temp/file.txt", 100L, "text/plain", "file.txt", "a".repeat(64));
 
         when(stagingStorageService.stage(any(), any(), any())).thenReturn(ticket);
         when(repository.findByIdempotencyKey(key)).thenReturn(Optional.empty());
@@ -158,7 +174,7 @@ class SettlementApplicationServiceTest {
                 key, "ACC-123", "USD", "100.00", SettlementType.CARD_PAYOUT,
                 "Test", null, "file.txt", "text/plain", new ByteArrayInputStream(new byte[0])
         );
-        StagingTicket ticket = new StagingTicket("temp/file.txt", 100L, "text/plain", "file.txt");
+        StagingTicket ticket = new StagingTicket("temp/file.txt", 100L, "text/plain", "file.txt", "a".repeat(64));
 
         when(stagingStorageService.stage(any(), any(), any())).thenReturn(ticket);
         when(repository.findByIdempotencyKey(key)).thenReturn(Optional.empty());
@@ -206,5 +222,50 @@ class SettlementApplicationServiceTest {
         assertThatThrownBy(() -> service.registerSettlement(cmd))
                 .isInstanceOf(InvalidChargebackException.class)
                 .hasMessageContaining("must belong to the same account");
+    }
+
+    @Test
+    void shouldPreserveStagingWhenCommitOutcomeIsUnknown() throws IOException {
+        var withFile = new RegisterSettlementCommand(key, "ACC-123", "USD", "100",
+                SettlementType.CARD_PAYOUT, "Test", null, "file.txt", "text/plain",
+                new ByteArrayInputStream(new byte[0]));
+        when(stagingStorageService.stage(any(), any(), any())).thenReturn(
+                new StagingTicket("temp/file.txt", 0, "text/plain", "file.txt", "a".repeat(64)));
+        when(repository.findByIdempotencyKey(key)).thenReturn(Optional.empty());
+        when(repository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        transactionManager.failCommit = true;
+        assertThatThrownBy(() -> service.registerSettlement(withFile)).isInstanceOf(TransactionSystemException.class);
+        verify(stagingStorageService, never()).compensateStaging(any());
+        verify(stagingStorageService, never()).promoteToPermanent(any());
+    }
+
+    @Test
+    void shouldPreserveOriginalIntegrityFailureWhenNoWinnerExists() {
+        when(repository.findByIdempotencyKey(key)).thenReturn(Optional.empty());
+        var failure = new DataIntegrityViolationException("unrelated constraint");
+        when(repository.saveAndFlush(any())).thenThrow(failure);
+        assertThatThrownBy(() -> service.registerSettlement(command)).isSameAs(failure);
+    }
+
+    @Test
+    void shouldRejectAmbientTransactionBeforeReadingTheStream() {
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .executeWithoutResult(status -> assertThatThrownBy(() -> service.registerSettlement(command))
+                        .isInstanceOf(IllegalStateException.class).hasMessageContaining("outside a transaction"));
+        verifyNoInteractions(repository, stagingStorageService);
+    }
+
+    // Exercises Spring's real completion callbacks with simulated commit/rollback outcomes.
+    // PostgreSQL behavior is covered separately by *IT tests.
+    static class TestTransactionManager extends AbstractPlatformTransactionManager {
+        boolean committed;
+        boolean failCommit;
+        @Override protected Object doGetTransaction() { return new Object(); }
+        @Override protected void doBegin(Object tx, TransactionDefinition definition) { }
+        @Override protected void doCommit(DefaultTransactionStatus status) {
+            if (failCommit) throw new TransactionSystemException("Commit acknowledgement lost");
+            committed = true;
+        }
+        @Override protected void doRollback(DefaultTransactionStatus status) { }
     }
 }

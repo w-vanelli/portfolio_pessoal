@@ -27,9 +27,8 @@ MVN_EXE="$MVN_DIST_DIR/bin/mvn"
 if [ ! -x "$MVN_EXE" ]; then
   mkdir -p "$MVN_USER_HOME"
   echo "Downloading Maven from $DIST_URL ..."
-  curl -sSL "$DIST_URL" -o "$MVN_USER_HOME/maven.zip"
+  curl -fsSL "$DIST_URL" -o "$MVN_USER_HOME/maven.zip"
   unzip -q "$MVN_USER_HOME/maven.zip" -d "$MVN_USER_HOME"
-  mv "$MVN_USER_HOME"/apache-maven-3.9.9* "$MVN_DIST_DIR"
   rm "$MVN_USER_HOME/maven.zip"
   chmod +x "$MVN_EXE"
 fi

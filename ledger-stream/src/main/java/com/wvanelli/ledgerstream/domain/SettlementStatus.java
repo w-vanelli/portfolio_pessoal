@@ -10,22 +10,22 @@ public enum SettlementStatus {
     STAGED,
 
     /**
-     * Transaction committed to the relational database.
+     * Durable database acceptance; attachment promotion and dispatch may remain pending.
      */
     COMMITTED,
 
     /**
-     * Dispatched to message broker for asynchronous processing.
+     * Publication confirmed, required routing verified and attachments ready. Not consumption or settlement.
      */
     DISPATCHED,
 
     /**
-     * Ingestion or validation failed.
+     * Preparation definitively abandoned before durable acceptance.
      */
     FAILED,
 
     /**
-     * Staging files compensated/cleaned up after transaction rollback or failure.
+     * Cleanup of abandoned pre-acceptance preparation actually completed.
      */
     COMPENSATED
 }

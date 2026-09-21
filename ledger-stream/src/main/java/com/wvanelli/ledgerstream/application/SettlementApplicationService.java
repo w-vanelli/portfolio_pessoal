@@ -13,95 +13,137 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class SettlementApplicationService {
-
     private static final Logger log = LoggerFactory.getLogger(SettlementApplicationService.class);
-
     private final SettlementEventRepository repository;
     private final StagingStorageService stagingStorageService;
+    private final TransactionTemplate transaction;
 
-    public SettlementApplicationService(SettlementEventRepository repository, StagingStorageService stagingStorageService) {
+    public SettlementApplicationService(SettlementEventRepository repository,
+            StagingStorageService stagingStorageService, PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.stagingStorageService = stagingStorageService;
+        this.transaction = new TransactionTemplate(transactionManager);
     }
 
     public SettlementEvent registerSettlement(RegisterSettlementCommand command) throws IOException {
-        MonetaryAmount monetaryAmount = new MonetaryAmount(command.amount());
-
+        // An ambient transaction would postpone commit beyond this method's promotion step.
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Settlement registration must be called outside a transaction");
+        }
+        Objects.requireNonNull(command, "command");
+        MonetaryAmount amount = new MonetaryAmount(command.amount());
+        validateCommand(command);
+        StagingTicket ticket = command.attachmentStream() == null ? null : stagingStorageService.stage(
+                command.attachmentFileName(), command.attachmentContentType(), command.attachmentStream());
         String checksum = ChecksumGenerator.generatePayloadChecksum(
-                command.accountId(), command.currency(), monetaryAmount,
-                command.settlementType(), command.description(), command.originalSettlementId(),
-                command.attachmentFileName(), command.attachmentContentType()
-        );
+                command.accountId(), command.currency(), amount, command.settlementType(),
+                command.description(), command.originalSettlementId(), command.attachmentFileName(),
+                command.attachmentContentType(), ticket == null ? null : ticket.contentChecksum());
 
-        Optional<SettlementEvent> existingEventOpt = repository.findByIdempotencyKey(command.idempotencyKey());
-        if (existingEventOpt.isPresent()) {
-            SettlementEvent existing = existingEventOpt.get();
-            if (existing.getPayloadChecksum().equals(checksum)) {
-                log.info("Idempotent request received for key {}. Returning existing result.", command.idempotencyKey());
-                return existing;
-            } else {
-                throw new IdempotencyConflictException("Conflict: Idempotency key exists but payload differs.");
-            }
-        }
-
-        StagingTicket ticket = null;
-        if (command.attachmentStream() != null) {
-            ticket = stagingStorageService.stage(
-                    command.attachmentFileName(),
-                    command.attachmentContentType(),
-                    command.attachmentStream()
-            );
-        }
-
-        SettlementEvent savedEvent;
+        Optional<SettlementEvent> existing;
         try {
-            savedEvent = persist(command, monetaryAmount, checksum, ticket);
-        } catch (DataIntegrityViolationException e) {
+            existing = repository.findByIdempotencyKey(command.idempotencyKey());
+        } catch (RuntimeException failure) {
+            cleanupStaging(ticket); // Acceptance has not started.
+            throw failure;
+        }
+        if (existing.isPresent()) {
             cleanupStaging(ticket);
-            return handleConcurrentConstraintViolation(command, checksum);
-        } catch (Exception e) {
-            cleanupStaging(ticket);
-            throw e;
+            return replay(existing.get(), checksum);
         }
 
-        if (ticket != null) {
-            try {
-                stagingStorageService.promoteToPermanent(ticket.storagePath());
-                // We could update attachment status to PERMANENT here, but rules state: 
-                // "Após COMMITTED, falha de promoção ou publicação deve preservar o evento e os arquivos necessários à recuperação."
-                // The event stays COMMITTED.
-            } catch (IOException e) {
-                log.error("Failed to promote staging file after commit. Event remains COMMITTED, recovery needed.", e);
-            }
-        }
-
-        return savedEvent;
-    }
-
-    private SettlementEvent handleConcurrentConstraintViolation(RegisterSettlementCommand command, String checksum) {
-        Optional<SettlementEvent> existingEventOpt = repository.findByIdempotencyKey(command.idempotencyKey());
-        if (existingEventOpt.isPresent()) {
-            SettlementEvent existing = existingEventOpt.get();
-            if (existing.getPayloadChecksum().equals(checksum)) {
-                log.info("Idempotent request recovered from concurrent constraint violation.");
-                return existing;
+        AtomicInteger completion = new AtomicInteger(TransactionSynchronization.STATUS_UNKNOWN);
+        SettlementEvent saved;
+        try {
+            saved = transaction.execute(status -> {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCompletion(int result) { completion.set(result); }
+                });
+                return persist(command, amount, checksum, ticket);
+            });
+        } catch (RuntimeException failure) {
+            if (completion.get() == TransactionSynchronization.STATUS_ROLLED_BACK) {
+                cleanupStaging(ticket);
+                if (failure instanceof DataIntegrityViolationException) {
+                    Optional<SettlementEvent> winner = repository.findByIdempotencyKey(command.idempotencyKey());
+                    if (winner.isPresent()) return replay(winner.get(), checksum);
+                }
             } else {
-                throw new IdempotencyConflictException("Conflict: Idempotency key exists but payload differs (detected concurrently).");
+                // A commit exception is not proof of rollback. Do not delete recoverable bytes.
+                log.error("Acceptance outcome requires reconciliation: key={}, staging={}",
+                        command.idempotencyKey(), ticket == null ? null : ticket.storagePath(), failure);
             }
+            throw failure;
         }
-        throw new IllegalStateException("Failed to recover from constraint violation, record not found.");
+
+        if (ticket != null) promoteAfterCommit(saved, ticket);
+        return saved;
     }
 
-    @Transactional
-    public SettlementEvent persist(RegisterSettlementCommand command, MonetaryAmount monetaryAmount, String checksum, StagingTicket ticket) {
+    private SettlementEvent replay(SettlementEvent existing, String checksum) {
+        if (!existing.getPayloadChecksum().equals(checksum)) {
+            throw new IdempotencyConflictException("Idempotency key exists but payload differs");
+        }
+        return existing;
+    }
+
+    private void promoteAfterCommit(SettlementEvent saved, StagingTicket ticket) {
+        try {
+            Path permanent = stagingStorageService.promoteToPermanent(ticket.storagePath());
+            transaction.executeWithoutResult(status -> {
+                SettlementEvent persisted = repository.findById(saved.getId()).orElseThrow();
+                SettlementAttachment attachment = persisted.getAttachments().stream()
+                        .filter(a -> a.getStoragePath().equals(ticket.storagePath())).findFirst().orElseThrow();
+                attachment.updateStoragePath(permanent.toString());
+                attachment.updateStatus(AttachmentStatus.PERMANENT);
+                repository.flush();
+            });
+            // Reflect the separately committed metadata in the response aggregate.
+            saved.getAttachments().forEach(a -> {
+                if (a.getStoragePath().equals(ticket.storagePath())) {
+                    a.updateStoragePath(permanent.toString());
+                    a.updateStatus(AttachmentStatus.PERMANENT);
+                }
+            });
+        } catch (IOException | RuntimeException failure) {
+            log.error("Post-commit promotion/metadata pending: event={}, staging={}. Preserve files for reconciliation.",
+                    saved.getId(), ticket.storagePath(), failure);
+        }
+    }
+
+    private void validateCommand(RegisterSettlementCommand command) {
+        Objects.requireNonNull(command.idempotencyKey(), "idempotencyKey");
+        Objects.requireNonNull(command.settlementType(), "settlementType");
+        if (command.accountId() == null || command.accountId().isBlank() || command.accountId().length() > 64
+                || command.currency() == null || !command.currency().matches("[A-Z]{3}")
+                || (command.description() != null && command.description().length() > 255)) {
+            throw new IllegalArgumentException("Invalid settlement metadata");
+        }
+        if (command.settlementType() != SettlementType.CHARGEBACK_ADJUSTMENT && command.originalSettlementId() != null) {
+            throw new InvalidChargebackException("Only chargebacks may reference an original settlement");
+        }
+        if (command.attachmentStream() == null
+                && (command.attachmentFileName() != null || command.attachmentContentType() != null)) {
+            throw new IllegalArgumentException("Attachment metadata requires an attachment stream");
+        }
+    }
+
+    private SettlementEvent persist(RegisterSettlementCommand command, MonetaryAmount monetaryAmount,
+                                     String checksum, StagingTicket ticket) {
         if (command.settlementType() == SettlementType.CHARGEBACK_ADJUSTMENT) {
             if (command.originalSettlementId() == null) {
                 throw new InvalidChargebackException("Chargeback adjustment must reference an original settlement.");
@@ -155,8 +197,8 @@ public class SettlementApplicationService {
         if (ticket == null) return;
         try {
             stagingStorageService.compensateStaging(ticket.storagePath());
-        } catch (IOException ioException) {
-            log.error("Failed to compensate staging file: {}", ticket.storagePath(), ioException);
+        } catch (IOException failure) {
+            log.error("Failed to compensate staging file: {}", ticket.storagePath(), failure);
         }
     }
 }

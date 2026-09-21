@@ -1,78 +1,88 @@
 # Improvement Integration Plan
 
-Este documento mapeia as recomendações de melhoria técnica para as fases do projeto, distinguindo o que já está na fundação estrutural do que será programado nas semanas seguintes.
+## 1. Foundation and contracts — Week 1
 
-## 1. Fundação e Contratos (Semana 1 - Concluída/Aprovada)
-As melhorias incorporadas nesta etapa visam preparar o terreno, mas não implementam código de negócio ainda:
-- **Contrato de Idempotência:** A OpenAPI agora prevê respostas `200 OK` (idempotência por replay seguro) e `409 Conflict` (violação de integridade ou checksum da chave) de forma clara.
-- **Isolamento Transacional Documentado:** O README descreve que o armazenamento do anexo (`java.nio.file`) é um passo distinto do commit no banco, evitando misturá-los numa única transação atômica idealizada.
-- **Definição Monetária (P1):** A representação monetária foi alinhada entre banco (`NUMERIC(15,2)`) e contrato (OpenAPI como `string`). Corrige-se a afirmação de que a regex anterior (`^\d+(\.\d{1,2})?$`) garantia valor estritamente positivo: ela aceitava zero e não limitava os dígitos inteiros. O contrato OpenAPI e o domínio foram atualizados para `^(0|[1-9]\d{0,12})(\.\d{1,2})?$`, limitando estritamente a 13 dígitos inteiros (teto de `NUMERIC(15,2)`).
-- **Limpeza do Estado Projetado:** O material público do repositório foi readequado para não prometer garantias ou testes que ainda não foram desenvolvidos (ajustes no README).
-- **Independência de Build:** A compilação local (Maven) foi desvinculada de mirrors corporativos e comprovada com sucesso em ambiente local. A execução remota do CI via GitHub Actions encontra-se registrada como **não verificada remotamente** por ausência de evidência de execução no ambiente do provedor.
+Preserved: Java 21/Spring Boot, Maven Wrapper, PostgreSQL schema and OpenAPI contract.
+The OpenAPI endpoints remain planned; a specification is not evidence of a running REST API.
 
-## 2. Implementação do Domínio, JPA e Storage (Semana 2)
+## 2. Domain, persistence and storage — Week 2
 
-### Incremento 1: Domínio, Persistência JPA e Contrato de Storage (Concluído e Testado)
-- **Modelos de Domínio e Enums:** Entidades JPA `SettlementEvent` e `SettlementAttachment`, com enums `SettlementStatus`, `SettlementType` e `AttachmentStatus`.
-- **Validação Monetária (Value Object `MonetaryAmount`):** Conversão direta `String -> BigDecimal` sem conversão intermediária por `double`. Validação estrita aos limites de `NUMERIC(15,2)` (máx. 13 dígitos inteiros e 2 decimais). Rejeição de precisão excedente (> 2 casas) sem arredondamento silencioso. Rejeição de valores negativos.
-- **Normalização para Idempotência:** Normalização canônica obrigatória via `setScale(2, RoundingMode.UNNECESSARY).toPlainString()` garantindo que representações equivalentes (ex.: `"150.5"` e `"150.50"`) gerem checksums SHA-256 idênticos para comparação de payload.
-- **Pendência Aberta de Domínio:** Registra-se como pendência a definição de negócio sobre aceitação de valor zero (`0.00`) e a modelagem contábil de estornos (`CHARGEBACK_ADJUSTMENT`) antes de assumir uma regra restritiva ou permissiva no domínio.
-- **Repositórios Spring Data JPA:** `SettlementEventRepository` (com `findByIdempotencyKey`, `existsByIdempotencyKey`, `findByAccountIdAndStatus`) e `SettlementAttachmentRepository`.
-- **Contrato de Storage:** Interface desacoplada `StagingStorageService` e record `StagingTicket` estabelecendo o contrato de fronteira (stage, promote, compensate) sem amarrar I/O físico à transação JPA.
-- **Testes Unitários:** 27 testes unitários automatizados cobrindo invariantes monetárias, entidades e tickets de staging. *Importante:* Os testes unitários comprovam a lógica em memória e **não são apresentados como comprovação de integração com PostgreSQL ou de recuperação física de arquivos**.
-- **Ativação no CI:** Atualização do workflow `.github/workflows/ci.yml` para executar `./mvnw clean test --no-transfer-progress`.
+### Increment 1 — Domain and repositories
 
-### 2.2. Incremento 2: Regras Monetárias, Storage e Schema
+Implemented: `MonetaryAmount`, event/attachment entities, enums and Spring Data repositories.
+Amounts are positive decimal strings from `0.01` through `9999999999999.99`, converted directly
+to `BigDecimal`, with no excess precision or silent rounding. Monetary normalization is only
+one component of full-payload idempotency.
 
-**Objetivo:** Consolidar e blindar a estrutura subjacente (valor, storage, schema) antes de avançar para os casos de uso complexos.
+### Increment 2 — Monetary rules, storage and schema
 
-**O que foi implementado (Decisões aprovadas):**
-*   **Regras Monetárias e Domínio:**
-    *   Valores devem ser estritamente positivos (`amount > 0`). A representação de zero e números negativos foi sumariamente rejeitada por restrição de Domínio (`MonetaryAmount.java`) e por constraint no banco (migration V2 `CHECK`).
-    *   A precisão foi cravada em 2 casas decimais, limitando o limite a `NUMERIC(15,2)` (0.01 a 9,999,999,999,999.99).
-    *   Representações decimais divergentes na API (ex. "1", "1.0", "1.00") são normalizadas de forma determinística ("1.00") antes do checksum de idempotência.
-*   **Estornos (Chargeback):**
-    *   Foi introduzida a coluna `original_settlement_id` (migration V2) e o mapeamento respectivo em `SettlementEvent.java`.
-    *   Ficou definido que estornos mantêm o original intacto. A validação das regras será aplicada no serviço de aplicação em incrementos posteriores.
-*   **Armazenamento em 2 Fases (NIO.2):**
-    *   A interface `StagingStorageService` e a implementação `StagingStorageServiceImpl` agora garantem:
-        1. Criação de nomes em `UUID` para os stages com controle contra Path Traversal.
-        2. Clean-up explícito em falhas (deleteIfExists).
-        3. `promoteToPermanent` via ATOMIC_MOVE com fallback para modo comum (nunca usa REPLACE_EXISTING).
-        4. O `compensateStaging` se tornou idempotente caso o arquivo falte, e propaga I/O de maneira transparente (sem warns invisíveis).
-*   **Testes e Infra:**
-    *   Failsafe inserido para rodar os `*IT` em Testcontainers PostgreSQL 16 (fases de `integration-test`).
-    *   RabbitMQ e auto-configuração desativados no profile de testes.
-    *   Workflow do Github `ci.yml` atualizado para `./mvnw clean verify`.
+V2 adds `CHECK (amount > 0)` and the original-settlement reference. The remote documentation
+reported an NIO storage implementation and its tests, but neither was tracked at baseline
+`8edb762`: the root ignore rule `**/storage/` excluded Java packages as well as runtime files.
 
-**Status Final do Incremento 2:**
-*   Implementado com sucesso.
-*   Testes Unitários: ✅ (49 passando)
-*   Testes de Integração: ⏸️ Implementado, porém com **validação pendente** (Testcontainers bloqueado devido à indisponibilidade do Docker Desktop no ambiente atual).
-*   **Pendência Crítica Resolvida:** A matriz de estado das transações foi implementada e validada, com transições estritas.
+Local correction on 2026-09-21 reconstructs the missing storage package and narrows the ignore
+rule to runtime paths. Each attempt owns a UUID directory. Stage computes the digest of bytes
+written without closing the caller's stream. Promotion reserves a destination directory and
+requires `ATOMIC_MOVE`, without a non-atomic fallback. Reservation avoids relying on the
+platform-dependent behavior of atomic move when a destination exists. Cleanup errors propagate
+from storage and are logged by the application service.
 
-### 2.3. Incremento 3: Serviço de Aplicação e Transações (Concluído)
+Storage assumes trusted application-owned roots. Atomic rename does not guarantee durability
+through power loss. Empty reservations, interrupted operations and orphan attempts require a
+future reconciler using persistent state and references, not TTL alone.
 
-**Objetivo:** Integrar domínio, repositórios e storage em um serviço transacional com idempotência e limites de I/O claros.
+### Increment 3 — Application service and transactions
 
-**O que foi implementado:**
-*   **Fronteiras Transacionais:** O registro do settlement (`SettlementApplicationService`) isola rigorosamente a transação em banco (`@Transactional`) da operação I/O física de promoção. O `promoteToPermanent` é executado somente após confirmação do `commit`. Se a promoção falhar, o status no banco permanece `COMMITTED` e os arquivos são preservados para recuperação posterior (orphan reconciliation).
-*   **Idempotência Robusta:** Utilização do `ChecksumGenerator` padronizado. Em caso de colisão de chave, o sistema identifica se o payload é idêntico (retornando sucesso idempotente) ou divergente (lançando `IdempotencyConflictException`). Exceções de unicidade (`DataIntegrityViolationException`) são tratadas gracefully limpando apenas os arquivos em `STAGED` do processo perdedor.
-*   **Regras de Chargeback:** Validado o encadeamento de um estorno para garantir que faz referência a um evento original real (não apaga ou altera) e pertence à mesma conta e moeda original, impedindo estorno de estorno.
+The service already existed remotely; this continuation repairs its guarantees rather than
+reimplementing a supposedly absent increment.
 
-**Status Final do Incremento 3:**
-*   Implementado com sucesso.
-*   Testes Unitários: ✅ (59 passando, cobertura das falhas e transições lógicas).
-*   Testes de Integração: ✅ Validação completa (Testcontainers + PostgreSQL 16) confirmando restrições de schema (Flyway), uniqueness de idempotência e cascatas.
+- Explicit `TransactionTemplate` owns acceptance. Calls inside an ambient transaction are
+  rejected before staging, avoiding file promotion before an outer caller commits.
+- Chargeback validation and event/attachment insertion share the acceptance transaction.
+- Unique database keys arbitrate concurrency; only a completed rollback permits cleanup
+  and duplicate recovery. Unrelated integrity violations retain the original failure.
+- Commit exceptions without confirmed rollback preserve staging for reconciliation.
+- File promotion happens after confirmed commit. A second transaction records permanent
+  attachment metadata. Failure in either post-commit step preserves the event and file.
+- Length-prefixed checksum fields avoid delimiter collisions and include the attachment's
+  actual content digest and original-settlement reference. Null and empty description are
+  distinct; currency is required in uppercase. The earlier checksum format is incompatible;
+  existing events are not rewritten or silently accepted under weaker legacy semantics.
+- The current flow ends at `COMMITTED`. There is no provisional direct broker publication.
 
-### 2.4. Próximos Passos
-*   Implementação do Outbox Transacional.
+## Validation evidence
 
-## 3. Mensageria e Resiliência (Fase Futura - Mantida no Planejamento Macro)
-- **Outbox Transacional e Recuperação:** Mecanismo para persistir atomicamente o evento e a intenção de notificação, garantindo retomada de falhas pós-commit com critérios verificáveis de aceitação. (Planejado).
-- **Consumidor Idempotente:** Consumo com verificação de efeito em negócio e isolamento de ACK do broker. (Planejado).
-- **Recuperação Pós-Queda Abrupta e Cleanup:** Rotina de reconciliação de arquivos órfãos baseada em cruzamento de estado com o banco de dados (usando TTL apenas como filtro complementar). (Planejado).
+The baseline GitHub Actions run
+[35452038814](https://github.com/w-vanelli/portfolio_pessoal/actions/runs/35452038814)
+failed before compilation because the Unix wrapper moved an extracted directory into itself.
+Both wrappers were corrected locally; Unix bootstrap was exercised from an empty Maven cache.
+Windows execution still requires verification on Windows.
 
-## 4. Testes e Demonstrações (Status Atual e Futuro)
-- **Testes Unitários Atuais:** Executados localmente com sucesso (27/27 aprovados) e integrados ao script de CI.
-- **Testes de Integração e Resiliência (Futuro):** Demonstrações de concorrência com threads simultâneas, simulação de falha de broker e rollback de transação.
+Local Java 21 unit/filesystem results and the full-build limitation are recorded in
+[estado.md](../../portfolio-context/estado.md). Historical totals of 27, 49 and 59 tests describe
+prior reports, not reproducible validation of the current remote tree.
+
+The integration suite includes PostgreSQL schema/constraint tests and service tests for real
+commits, concurrent equivalent requests, attachment metadata and chargebacks. Testcontainers
+uses one explicitly started PostgreSQL instance across the cached Spring test contexts. Unit
+transaction tests use Spring completion callbacks with simulated outcomes; they do not replace
+real PostgreSQL integration or prove recovery after process termination.
+
+## 3. Messaging and resilience — next macro phase
+
+After the current service passes `clean verify` with Docker:
+
+1. Persist an outbox entry in the same transaction as acceptance.
+2. Add a dispatcher with broker confirmations, required routing verification, ready-attachment
+   checks and retries. Only then transition to `DISPATCHED`.
+3. Implement an idempotent consumer and failure handling.
+4. Implement state-aware reconciliation for unknown commits and interrupted file operations.
+
+No exactly-once end-to-end guarantee. Dispatch confirmation is not consumer completion or
+financial settlement. In-memory callbacks cannot recover state after a crash.
+
+## 4. Interview demonstrations
+
+Preserved scope: show concurrent requests, changed payload conflicts, failed preparation,
+unknown commit outcomes, file promotion failure, broker failure and recovery. Demonstrate only
+behaviors exercised by tests; mark future broker/crash demonstrations as planned.

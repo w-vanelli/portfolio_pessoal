@@ -37,7 +37,8 @@ IF EXIST "%MVN_EXE%" GOTO run
 
 ECHO Downloading Maven from %MVN_DIST_URL% ...
 IF NOT EXIST "%MVN_USER_HOME%" MKDIR "%MVN_USER_HOME%"
-powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $zip = '%MVN_USER_HOME%\maven.zip'; Invoke-WebRequest -Uri '%MVN_DIST_URL%' -OutFile $zip; Expand-Archive -Path $zip -DestinationPath '%MVN_USER_HOME%'; Move-Item -Path '%MVN_USER_HOME%\apache-maven-3.9.9*' -Destination '%MVN_DIST_DIR%' -Force; Remove-Item $zip -Force"
+powershell -Command "$ErrorActionPreference = 'Stop'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $zip = '%MVN_USER_HOME%\maven.zip'; Invoke-WebRequest -Uri '%MVN_DIST_URL%' -OutFile $zip; Expand-Archive -Path $zip -DestinationPath '%MVN_USER_HOME%'; Remove-Item $zip -Force"
+IF ERRORLEVEL 1 GOTO error
 
 IF NOT EXIST "%MVN_EXE%" (
   ECHO Error: Failed to extract Maven to %MVN_DIST_DIR%
