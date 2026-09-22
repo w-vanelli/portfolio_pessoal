@@ -1,0 +1,12 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  flyway:
+    enabled: true
+    clean-disabled: false
+
+ledgerstream:
+  storage:
+    staging-dir: "/ledgerstream-staging"
+    permanent-dir: "/ledgerstream-permanent"
+

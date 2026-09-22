@@ -53,7 +53,10 @@ class SettlementApplicationServiceTest {
     @BeforeEach
     void setUp() {
         transactionManager = new TestTransactionManager();
-        service = new SettlementApplicationService(repository, outboxRepository, stagingStorageService, transactionManager);
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        mapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        mapper.disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        service = new SettlementApplicationService(repository, outboxRepository, stagingStorageService, transactionManager, mapper);
         key = UUID.randomUUID();
         command = new RegisterSettlementCommand(
                 key, "ACC-123", "USD", "100.00", SettlementType.CARD_PAYOUT,

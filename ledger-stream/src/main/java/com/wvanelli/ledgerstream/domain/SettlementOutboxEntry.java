@@ -35,6 +35,9 @@ public class SettlementOutboxEntry {
     @Column(name = "payload_checksum", nullable = false, length = 64)
     private String payloadChecksum;
 
+    @Column(name = "payload", nullable = false, columnDefinition = "TEXT")
+    private String payload;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private OutboxStatus status;
@@ -56,13 +59,14 @@ public class SettlementOutboxEntry {
 
     protected SettlementOutboxEntry() { }
 
-    public SettlementOutboxEntry(SettlementEvent event) {
+    public SettlementOutboxEntry(SettlementEvent event, String payload) {
         Objects.requireNonNull(event, "event");
         this.id = UUID.randomUUID();
         this.settlementId = Objects.requireNonNull(event.getId(), "event must be persisted");
         this.idempotencyKey = event.getIdempotencyKey();
         this.eventType = "settlement.accepted";
         this.payloadChecksum = event.getPayloadChecksum();
+        this.payload = Objects.requireNonNull(payload, "payload");
         this.status = OutboxStatus.PENDING;
         this.attempts = 0;
         this.availableAt = OffsetDateTime.now(ZoneOffset.UTC);
@@ -82,6 +86,7 @@ public class SettlementOutboxEntry {
     public UUID getIdempotencyKey() { return idempotencyKey; }
     public String getEventType() { return eventType; }
     public String getPayloadChecksum() { return payloadChecksum; }
+    public String getPayload() { return payload; }
     public OutboxStatus getStatus() { return status; }
     public int getAttempts() { return attempts; }
     public OffsetDateTime getAvailableAt() { return availableAt; }
@@ -100,5 +105,12 @@ public class SettlementOutboxEntry {
         attempts++;
         lastError = error == null ? null : error.substring(0, Math.min(error.length(), 1000));
         availableAt = Objects.requireNonNull(retryAt, "retryAt");
+    }
+
+    public void markFailed(String error) {
+        if (status != OutboxStatus.PENDING) throw new IllegalStateException("Only pending entries can be marked failed");
+        status = OutboxStatus.FAILED;
+        attempts++;
+        lastError = error == null ? null : error.substring(0, Math.min(error.length(), 1000));
     }
 }

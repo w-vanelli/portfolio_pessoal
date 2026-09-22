@@ -27,6 +27,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 @ActiveProfiles("integration-test")
 public abstract class AbstractIntegrationTest {
 
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    org.springframework.amqp.rabbit.core.RabbitTemplate rabbitTemplate;
+
     static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>("postgres:16-alpine")
                     .withDatabaseName("ledgerstream_test")

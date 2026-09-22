@@ -100,9 +100,7 @@ and limitations. Historical test totals are not evidence that a fresh checkout p
 The remote baseline `8edb762` failed in Maven bootstrap before compiling; subsequent local
 changes require a successful Actions run for their own commit; consult the workflow result rather than inferring CI success from local unit tests.
 
-The next phase is an outbox dispatcher with broker confirmations and required-routing checks, followed by resilient messaging, an idempotent
-consumer, state-aware crash recovery and interview failure demonstrations. Outbox entries
-must be written in the acceptance transaction; direct publication is not an interim substitute.
+The next phase is resilient messaging and an idempotent consumer, state-aware crash recovery and interview failure demonstrations. Outbox entries are written in the acceptance transaction; a background worker (Outbox Dispatcher) polls these pending entries and publishes them to RabbitMQ using correlated publisher confirms and mandatory routing, updating the event to `DISPATCHED` upon verified routing.
 
 ## Originality
 

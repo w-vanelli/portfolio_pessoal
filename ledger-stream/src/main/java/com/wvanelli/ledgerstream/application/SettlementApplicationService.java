@@ -20,6 +20,9 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wvanelli.ledgerstream.domain.SettlementAcceptedPayload;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Objects;
@@ -33,14 +36,16 @@ public class SettlementApplicationService {
     private final SettlementOutboxRepository outboxRepository;
     private final StagingStorageService stagingStorageService;
     private final TransactionTemplate transaction;
+    private final ObjectMapper objectMapper;
 
     public SettlementApplicationService(SettlementEventRepository repository,
             SettlementOutboxRepository outboxRepository, StagingStorageService stagingStorageService,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager, ObjectMapper objectMapper) {
         this.repository = repository;
         this.outboxRepository = outboxRepository;
         this.stagingStorageService = stagingStorageService;
         this.transaction = new TransactionTemplate(transactionManager);
+        this.objectMapper = objectMapper;
     }
 
     public SettlementEvent registerSettlement(RegisterSettlementCommand command) throws IOException {
@@ -196,9 +201,39 @@ public class SettlementApplicationService {
         event.transitionTo(SettlementStatus.COMMITTED);
         
         SettlementEvent saved = repository.saveAndFlush(event);
+        
+        // Build the payload
+        java.util.List<SettlementAcceptedPayload.AttachmentMetadata> attachmentMetadata = new java.util.ArrayList<>();
+        if (ticket != null) {
+            attachmentMetadata.add(new SettlementAcceptedPayload.AttachmentMetadata(
+                    ticket.originalFileName(), ticket.contentType(), ticket.fileSizeBytes()
+            ));
+        }
+        
+        SettlementAcceptedPayload payloadObj = new SettlementAcceptedPayload(
+                java.util.UUID.randomUUID(),
+                "1.0",
+                "settlement.accepted",
+                saved.getId(),
+                saved.getSettlementType().name(),
+                saved.getAccountId(),
+                saved.getCurrency(),
+                saved.getAmount().toPlainString(),
+                saved.getOriginalSettlementId(),
+                saved.getCreatedAt(),
+                attachmentMetadata
+        );
+        
+        String payloadJson;
+        try {
+            payloadJson = objectMapper.writeValueAsString(payloadObj);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize outbox payload", e);
+        }
+
         // The outbox row must be part of this same transaction. If this write fails,
         // acceptance rolls back and the staged attempt is eligible for compensation.
-        outboxRepository.saveAndFlush(new SettlementOutboxEntry(saved));
+        outboxRepository.saveAndFlush(new SettlementOutboxEntry(saved, payloadJson));
         return saved;
     }
 
