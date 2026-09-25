@@ -40,12 +40,11 @@ spring:
     publisher-confirm-type: correlated
     publisher-returns: true
     template:
-      retry:
-        enabled: true
-        initial-interval: 1000ms
-        max-attempts: 3
-        multiplier: 2.0
-        max-interval: 10000ms
+      mandatory: true
+      # Template-level retry is intentionally disabled. The OutboxDispatcherService
+      # manages retries with backoff, jitter and attempt limits. Enabling template
+      # retry would silently re-send at the AMQP level, masking failures from the
+      # outbox's own retry policy.
 
 ledgerstream:
   storage:

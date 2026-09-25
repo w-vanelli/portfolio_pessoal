@@ -202,7 +202,12 @@ public class SettlementApplicationService {
         
         SettlementEvent saved = repository.saveAndFlush(event);
         
-        // Build the payload
+        // Pre-generate the outbox entry UUID. This becomes the stable logical event
+        // identity: it appears as messageId in the AMQP header and inside the JSON
+        // payload, enabling consumer-side deduplication across retries.
+        java.util.UUID outboxId = java.util.UUID.randomUUID();
+        
+        // Build the immutable payload that will be persisted and reused verbatim on retries.
         java.util.List<SettlementAcceptedPayload.AttachmentMetadata> attachmentMetadata = new java.util.ArrayList<>();
         if (ticket != null) {
             attachmentMetadata.add(new SettlementAcceptedPayload.AttachmentMetadata(
@@ -211,7 +216,7 @@ public class SettlementApplicationService {
         }
         
         SettlementAcceptedPayload payloadObj = new SettlementAcceptedPayload(
-                java.util.UUID.randomUUID(),
+                outboxId,
                 "1.0",
                 "settlement.accepted",
                 saved.getId(),
@@ -233,7 +238,7 @@ public class SettlementApplicationService {
 
         // The outbox row must be part of this same transaction. If this write fails,
         // acceptance rolls back and the staged attempt is eligible for compensation.
-        outboxRepository.saveAndFlush(new SettlementOutboxEntry(saved, payloadJson));
+        outboxRepository.saveAndFlush(new SettlementOutboxEntry(outboxId, saved, payloadJson));
         return saved;
     }
 

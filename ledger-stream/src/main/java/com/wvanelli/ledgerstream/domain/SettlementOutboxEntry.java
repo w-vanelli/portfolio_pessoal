@@ -60,8 +60,17 @@ public class SettlementOutboxEntry {
     protected SettlementOutboxEntry() { }
 
     public SettlementOutboxEntry(SettlementEvent event, String payload) {
+        this(UUID.randomUUID(), event, payload);
+    }
+
+    /**
+     * Creates an outbox entry with a pre-determined UUID. The same UUID should appear
+     * as {@code messageId} inside the serialized payload, making the logical event
+     * identity available to consumers in both the AMQP header and the JSON body.
+     */
+    public SettlementOutboxEntry(UUID id, SettlementEvent event, String payload) {
         Objects.requireNonNull(event, "event");
-        this.id = UUID.randomUUID();
+        this.id = Objects.requireNonNull(id, "id");
         this.settlementId = Objects.requireNonNull(event.getId(), "event must be persisted");
         this.idempotencyKey = event.getIdempotencyKey();
         this.eventType = "settlement.accepted";
@@ -112,5 +121,15 @@ public class SettlementOutboxEntry {
         status = OutboxStatus.FAILED;
         attempts++;
         lastError = error == null ? null : error.substring(0, Math.min(error.length(), 1000));
+    }
+
+    /**
+     * Reschedules a pending entry without incrementing the attempt counter.
+     * Used for situations where no definitive outcome is known (e.g. confirm timeout)
+     * or when a precondition is not yet met (e.g. attachments still in staging).
+     */
+    public void deferWithoutAttempt(OffsetDateTime retryAt) {
+        if (status != OutboxStatus.PENDING) throw new IllegalStateException("Only pending entries can be deferred");
+        availableAt = Objects.requireNonNull(retryAt, "retryAt");
     }
 }

@@ -68,25 +68,38 @@ uses one explicitly started PostgreSQL instance across the cached Spring test co
 transaction tests use Spring completion callbacks with simulated outcomes; they do not replace
 real PostgreSQL integration or prove recovery after process termination.
 
-### Increment 4 — transactional outbox
+### Increment 4 — Transactional Outbox and Dispatcher
 
-Implemented locally in this continuation: migration V3 creates `settlement_outbox` with one
-unique row per accepted settlement, `PENDING` status, attempt metadata and dispatch scheduling
-fields. `SettlementApplicationService` writes the row through `SettlementOutboxRepository`
-inside the same transaction as the event and attachment reference. A failure to write the
-outbox therefore rolls back acceptance. The row stores immutable publication identity (event
-ID, idempotency key, event type and checksum); it does not claim broker publication.
+Implemented locally: `SettlementApplicationService` generates an outbox UUID upfront, embedding it into an immutable JSON payload and storing both in `settlement_outbox` inside the acceptance transaction. This outbox ID provides a stable logical event identity across retries, enabling consumer deduplication.
 
-No publisher, consumer, broker confirmation or `DISPATCHED` transition exists yet.
+Migration `V4` adds the mandatory payload column and sets it for new entries. A new migration `V5` explicitly quarantines pre-existing legacy `V3` outbox records. Entries lacking a real payload are marked `FAILED` with a sentinel `_quarantine` JSON metadata payload rather than fabricating invalid fictitious events. This prevents publication while preserving the outbox row, settlement, and any associated files for manual review. No administrative replay or legacy data recovery is implemented in this increment.
+
+The scheduled `OutboxDispatcherService` processes `PENDING` entries sequentially:
+- **Attachment Gating**: Publication is deferred without consuming attempts until all attachments reach `PERMANENT` storage.
+- **Correlated Confirms**: Uses Spring AMQP correlated publisher confirms and returns (`mandatory: true`).
+- **Atomicity**: Success (broker ACK without Return) marks the outbox `PUBLISHED` and the event `DISPATCHED` in a local `REQUIRES_NEW` transaction. Failure to save to the DB after an ACK triggers a transaction rollback, leaving the record `PENDING` and allowing recovery via duplicate dispatch.
+- **Resilience**: NACKs and Returns trigger exponential backoff with jitter up to a terminal `FAILED` state (which stops retries but preserves the event and files).
+- **Timeout as Unknown**: Wait timeouts limit the confirm check to five seconds. A timeout indicates an attempt was made but the outcome is unknown. This *consumes* a retry attempt and reschedules the entry. If the limit is reached, it goes to `FAILED`. Duplicate delivery may occur on the next attempt.
+- **Deliberate Limitations**: 
+  - The dispatcher runs on a single-instance scheduler; it lacks distributed locking for concurrent replicas.
+  - At-least-once delivery semantics imply the possibility of duplicate events being published (e.g. on confirm timeout or DB rollback after ACK).
+  - No consumer application or idempotency logic is implemented in this increment.
+
+### Validation evidence
+
+The integration suite uses Testcontainers for isolated RabbitMQ and PostgreSQL contexts. `mvnw.cmd clean verify` on Windows completed successfully with:
+- 83 unit/filesystem tests passed via Surefire.
+- 23 integration tests passed via Failsafe (including `*IT`).
+- No failures, errors, or skipped tests.
+
+Integration tests explicitly prove transactional rollback after broker ACK, concurrent equivalent requests, and exact delivery to RabbitMQ queues with stable AMQP headers and payloads.
 
 ## 3. Messaging and resilience — next macro phase
 
 After the current service passes `clean verify` with Docker:
 
-1. Add a dispatcher with broker confirmations, required routing verification, ready-attachment
-   checks and retries. Only then transition to `DISPATCHED`.
-3. Implement an idempotent consumer and failure handling.
-4. Implement state-aware reconciliation for unknown commits and interrupted file operations.
+1. Implement an idempotent consumer and failure handling.
+2. Implement state-aware reconciliation for unknown commits and interrupted file operations.
 
 No exactly-once end-to-end guarantee. Dispatch confirmation is not consumer completion or
 financial settlement. In-memory callbacks cannot recover state after a crash.
