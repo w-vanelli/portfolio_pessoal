@@ -98,8 +98,15 @@ Integration tests explicitly prove transactional rollback after broker ACK, conc
 
 After the current service passes `clean verify` with Docker:
 
-1. Implement an idempotent consumer and failure handling.
-2. Implement state-aware reconciliation for unknown commits and interrupted file operations.
+1. Implement state-aware reconciliation for unknown commits and interrupted file operations.
+
+### Increment 5 - Idempotent Consumer and Projections (Verified)
+
+Implemented and verified: A RabbitMQ consumer that processes settlement events idempotently to build an operational projection.
+- **Idempotency Strategy**: Uses a dedicated `consumer_idempotency` table combined with a transactional save. Unique constraint `message_id` natively prevents race conditions on parallel consumption. Transactions atomically commit both the idempotency marker and the projection; if the projection fails, idempotency is also rolled back, allowing safe redelivery. (Note: Initial designs referenced a "lock table", but optimistic primary-key enforcement was used directly for better reliability).
+- **Operational Projection**: Creates a `settlement_projection` record (via migration `V6`) representing the accepted settlement. This is strictly an intentional *scope decision* for simple operational queries (by ID and Account ID), and not a technical debt. It does **not** implement financial execution, balance calculation (`account_balance_shadow`), debits, credits, or value accumulation. Replay functionality remains out of scope.
+- **Contract Strictness**: The consumer (`SettlementEventConsumer`) strictly validates the schema `version=1.0`, `eventType`, payload completeness, payload logic (`messageId` matches AMQP header), and ensures strictly positive monetary amounts. Malformed messages are immediately rejected (no requeue) via `AmqpRejectAndDontRequeueException` to `ledger.settlement.events.dlq`.
+- **Consumer Resilience**: Employs `ackMode = "AUTO"`. Transient infrastructure failures trigger up to 3 local retries before exhausting and falling into the DLQ. The `EndToEndSettlementIT` validates the complete path from `SettlementApplicationService` to the `settlement_projection` without `auto-startup` interference from other tests.
 
 No exactly-once end-to-end guarantee. Dispatch confirmation is not consumer completion or
 financial settlement. In-memory callbacks cannot recover state after a crash.

@@ -45,6 +45,15 @@ spring:
       # manages retries with backoff, jitter and attempt limits. Enabling template
       # retry would silently re-send at the AMQP level, masking failures from the
       # outbox's own retry policy.
+    listener:
+      simple:
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
+          max-interval: 5000ms
+          multiplier: 2.0
 
 ledgerstream:
   storage:

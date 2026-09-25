@@ -27,11 +27,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>The automatic scheduler is disabled by setting a very high poll interval in
  * the messaging-integration-test profile; dispatch is triggered explicitly.
  */
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest(properties = "spring.rabbitmq.listener.simple.auto-startup=false")
 class OutboxDispatcherServiceIT extends AbstractMessagingIntegrationTest {
 
     @Autowired private OutboxDispatcherService dispatcherService;
     @Autowired private SettlementEventRepository eventRepository;
-    @org.springframework.boot.test.mock.mockito.SpyBean private SettlementOutboxRepository outboxRepository;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean private SettlementOutboxRepository outboxRepository;
     @Autowired private RabbitTemplate rabbitTemplate;
     @Autowired private RabbitAdmin rabbitAdmin;
 
