@@ -108,8 +108,26 @@ Implemented and verified: A RabbitMQ consumer that processes settlement events i
 - **Contract Strictness**: The consumer (`SettlementEventConsumer`) strictly validates the schema `version=1.0`, `eventType`, payload completeness, payload logic (`messageId` matches AMQP header), and ensures strictly positive monetary amounts. Malformed messages are immediately rejected (no requeue) via `AmqpRejectAndDontRequeueException` to `ledger.settlement.events.dlq`.
 - **Consumer Resilience**: Employs `ackMode = "AUTO"`. Transient infrastructure failures trigger up to 3 local retries before exhausting and falling into the DLQ. The `EndToEndSettlementIT` validates the complete path from `SettlementApplicationService` to the `settlement_projection` without `auto-startup` interference from other tests.
 
+### Increment 6 - Operational Projection Query REST Endpoints (Verified)
+
+Implemented and verified: REST query API exposing the operational read-model (`settlement_projection`) for operators, clients, and downstream systems.
+- **REST Endpoints**:
+  - `GET /api/v1/settlements/{id}`: Look up a projected settlement by its numeric internal settlement ID. Returns `200 OK` with `SettlementProjectionResponse` or `404 Not Found` with standardized `ErrorResponse` if the settlement has not yet been processed by the consumer or does not exist.
+  - `GET /api/v1/settlements?accountId=...`: Query all projected settlements for a specific merchant/account, ordered by acceptance timestamp descending (`accepted_at DESC`). Returns `200 OK` with a JSON list (empty list `[]` if none found) or `400 Bad Request` if `accountId` is missing/blank.
+- **Schema & Indexing (Migration V7)**:
+  - Adds unique index `CREATE UNIQUE INDEX idx_settlement_projection_settlement_id ON settlement_projection(settlement_id);` to ensure O(1) index seek by numeric settlement ID and enforce single-projection database integrity.
+- **Global Error Contract**:
+  - `GlobalExceptionHandler` (`@RestControllerAdvice`) maps not-found (`ResourceNotFoundException`), illegal arguments (`IllegalArgumentException`), parameter type mismatches, and missing parameters directly to the OpenAPI-compliant `ErrorResponse` JSON structure.
+- **CQRS Read-Model Scope Boundary**:
+  - The query endpoints read strictly from `settlement_projection` (the consumer read model), preserving CQRS decoupling. They do not query or mutate the producer tables (`settlement_events`, `settlement_outbox`).
+- **Validation Evidence**:
+  - Unit tests for service and slice tests for controller with MockMvc (`SettlementProjectionQueryServiceTest`, `SettlementQueryControllerTest`).
+  - Integration tests with real PostgreSQL Testcontainer exercising migrations V1 to V7 (`SettlementQueryControllerIT`).
+  - End-to-end integration (`EndToEndSettlementIT`) validating full flow from settlement registration through outbox dispatch and consumer projection to query service retrieval.
+
 No exactly-once end-to-end guarantee. Dispatch confirmation is not consumer completion or
 financial settlement. In-memory callbacks cannot recover state after a crash.
+
 
 ## 4. Interview demonstrations
 

@@ -1,0 +1,3 @@
+-- V7__add_index_settlement_projection_settlement_id.sql
+
+CREATE INDEX idx_settlement_projection_settlement_id ON settlement_projection(settlement_id);

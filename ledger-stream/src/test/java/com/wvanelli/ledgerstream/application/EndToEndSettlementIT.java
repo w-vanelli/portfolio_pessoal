@@ -40,6 +40,9 @@ public class EndToEndSettlementIT extends AbstractMessagingIntegrationTest {
     @Autowired
     private SettlementOutboxRepository outboxRepository;
 
+    @Autowired
+    private SettlementProjectionQueryService queryService;
+
     @AfterEach
     void tearDown() {
         projectionRepository.deleteAll();
@@ -48,7 +51,7 @@ public class EndToEndSettlementIT extends AbstractMessagingIntegrationTest {
     }
 
     @Test
-    @DisplayName("Fluxo completo: Service -> Outbox -> RabbitMQ -> Consumer -> Projeção")
+    @DisplayName("Fluxo completo: Service -> Outbox -> RabbitMQ -> Consumer -> Projeção -> Query Service")
     void shouldProcessEndToEnd() throws Exception {
         // 1. Arrange & Act: Call application service to accept settlement
         var command = new com.wvanelli.ledgerstream.application.RegisterSettlementCommand(
@@ -72,6 +75,13 @@ public class EndToEndSettlementIT extends AbstractMessagingIntegrationTest {
             assertThat(projections).hasSize(1);
             assertThat(projections.get(0).getAmount()).isEqualByComparingTo("150.00");
             assertThat(projections.get(0).getSettlementId()).isEqualTo(receipt.getId());
+
+            var queryResult = queryService.findById(receipt.getId());
+            assertThat(queryResult).isPresent();
+            assertThat(queryResult.get().id()).isEqualTo(receipt.getId());
+            assertThat(queryResult.get().accountId()).isEqualTo("ACC-E2E-1");
+            assertThat(queryResult.get().amount()).isEqualTo("150.00");
         });
     }
 }
+

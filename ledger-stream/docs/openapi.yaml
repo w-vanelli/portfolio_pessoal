@@ -2,9 +2,11 @@ openapi: 3.0.3
 info:
   title: LedgerStream API
   description: >
-    Planned REST contract; controllers are not implemented yet. LedgerStream records
-    settlement events without moving money or calculating balances. The current application
-    service ends at COMMITTED. Outbox, dispatch, consumer and recovery are future phases.
+    REST contract for LedgerStream. Operational settlement projection query endpoints
+    (/api/v1/settlements/{id} and /api/v1/settlements?accountId=...) are implemented and verified.
+    Ingestion endpoint remains planned. LedgerStream records settlement events without moving money
+    or calculating balances. Outbox dispatch, consumer idempotency and projection storage are verified.
+
   version: 1.0.0
   contact:
     name: Wellington Vanelli
@@ -92,12 +94,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+        - Settlements
+      summary: Query settlement projections by account identifier
+      description: >
+        Returns the operational projection of settlements for a specific account.
+        The projection represents processed and accepted settlement events.
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          description: Identifier of the merchant or tenant account.
+          schema:
+            type: string
+            example: "ACC-US-9842"
+      responses:
+        '200':
+          description: List of projected settlements for the account.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SettlementProjectionResponse'
+        '400':
+          description: Missing or invalid query parameter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/settlements/{id}:
     get:
       tags:
         - Settlements
-      summary: Retrieve settlement by identifier
+      summary: Retrieve settlement projection by identifier
+      description: >
+        Returns the operational projection of a settlement by its internal numeric settlement ID.
       parameters:
         - name: id
           in: path
@@ -109,17 +143,24 @@ paths:
             example: 1001
       responses:
         '200':
-          description: Settlement details retrieved successfully.
+          description: Settlement projection details retrieved successfully.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SettlementResponse'
+                $ref: '#/components/schemas/SettlementProjectionResponse'
         '404':
-          description: Settlement not found.
+          description: Settlement projection not found.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: Invalid identifier.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 
   /api/v1/settlements/idempotency/{key}:
     get:
@@ -215,6 +256,45 @@ components:
           example: "Monthly recurring SaaS license payout batch #84"
           maxLength: 255
 
+    SettlementProjectionResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1001
+        settlementId:
+          type: integer
+          format: int64
+          example: 1001
+        messageId:
+          type: string
+          format: uuid
+          example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+        accountId:
+          type: string
+          example: "ACC-US-9842"
+        currency:
+          type: string
+          example: "USD"
+        amount:
+          type: string
+          example: "1450.75"
+        settlementType:
+          type: string
+          example: "WIRE_TRANSFER"
+        originalSettlementId:
+          type: integer
+          format: int64
+          nullable: true
+          example: null
+        acceptedAt:
+          type: string
+          format: date-time
+        processedAt:
+          type: string
+          format: date-time
+
     SettlementResponse:
       type: object
       properties:
@@ -222,6 +302,7 @@ components:
           type: integer
           format: int64
           example: 1001
+
         idempotencyKey:
           type: string
           format: uuid
