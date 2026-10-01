@@ -4,6 +4,7 @@ import com.wvanelli.ledgerstream.domain.*;
 import com.wvanelli.ledgerstream.infrastructure.messaging.DispatcherProperties;
 import com.wvanelli.ledgerstream.repository.SettlementEventRepository;
 import com.wvanelli.ledgerstream.repository.SettlementOutboxRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,7 @@ class OutboxDispatcherServiceTest {
     private RabbitTemplate rabbitTemplate;
     private DispatcherProperties properties;
     private OutboxDispatcherService dispatcherService;
+    private SimpleMeterRegistry registry;
 
     @BeforeEach
     void setUp() {
@@ -55,6 +57,7 @@ class OutboxDispatcherServiceTest {
         rabbitTemplate = mock(RabbitTemplate.class);
         properties = new DispatcherProperties();
         properties.setMaxAttempts(3);
+        registry = new SimpleMeterRegistry();
 
         PlatformTransactionManager transactionManager = new AbstractPlatformTransactionManager() {
             @Override protected Object doGetTransaction() { return new Object(); }
@@ -63,7 +66,7 @@ class OutboxDispatcherServiceTest {
             @Override protected void doRollback(DefaultTransactionStatus status) {}
         };
         dispatcherService = new OutboxDispatcherService(
-                outboxRepository, eventRepository, rabbitTemplate, properties, transactionManager, "exchange"
+                outboxRepository, eventRepository, rabbitTemplate, properties, transactionManager, "exchange", registry
         );
     }
 
@@ -147,6 +150,9 @@ class OutboxDispatcherServiceTest {
         assertThat(entry.getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
         assertThat(entry.getPublishedAt()).isNotNull();
         assertThat(event.getStatus()).isEqualTo(SettlementStatus.DISPATCHED);
+        assertThat(registry.get("ledgerstream.dispatcher.attempts").counter().count()).isEqualTo(1);
+        assertThat(registry.get("ledgerstream.dispatcher.published").counter().count()).isEqualTo(1);
+        assertThat(registry.get("ledgerstream.dispatcher.duration").timer().count()).isEqualTo(1);
         verify(outboxRepository).saveAndFlush(entry);
     }
 
@@ -208,6 +214,8 @@ class OutboxDispatcherServiceTest {
         assertThat(entry.getAttempts()).isEqualTo(1);
         assertThat(entry.getLastError()).contains("Broker NACK: Queue full");
         assertThat(event.getStatus()).isEqualTo(SettlementStatus.COMMITTED);
+        assertThat(registry.get("ledgerstream.dispatcher.attempts").counter().count()).isEqualTo(1);
+        assertThat(registry.get("ledgerstream.dispatcher.failed").counter().count()).isEqualTo(1);
         verify(outboxRepository).saveAndFlush(entry);
     }
 
@@ -301,6 +309,8 @@ class OutboxDispatcherServiceTest {
 
         assertThat(entry.getStatus()).isEqualTo(OutboxStatus.PENDING);
         assertThat(entry.getAttempts()).isEqualTo(0);
+        assertThat(registry.get("ledgerstream.dispatcher.attempts").counter().count()).isZero();
+        assertThat(registry.get("ledgerstream.dispatcher.deferred").counter().count()).isEqualTo(1);
         // Should not attempt to send to broker at all
         verify(rabbitTemplate, never()).send(any(), any(), any(Message.class), any(CorrelationData.class));
         verify(outboxRepository).saveAndFlush(entry);

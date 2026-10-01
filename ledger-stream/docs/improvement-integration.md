@@ -258,3 +258,40 @@ and a dispatcher/reconciler race in which a committed dispatcher failure must su
 Failures are injected at real boundaries; these tests do not claim to terminate a
 process or prove power-loss durability. Test profiles disable automatic reconciliation
 and postpone automatic dispatch; production scheduling defaults remain enabled.
+
+---
+
+### Observabilidade, Métricas Operacionais e Endpoint Administrativo
+
+Para garantir visibilidade em tempo real sobre a saúde do processo assíncrono de reconciliação e da esteira outbox-broker, o sistema foi instrumentado com **Micrometer** e exposto via endpoints administrativos:
+
+#### 1. Métricas Micrometer (`io.micrometer.core.instrument.MeterRegistry`)
+
+- **Reconciliação (`SettlementReconciliationService`):**
+  - `ledgerstream.reconciliation.runs` (Counter): Total de execuções de reconciliação disparadas (agendadas ou sob demanda).
+  - `ledgerstream.reconciliation.duration` (Timer): Tempo de execução de cada ciclo de reconciliação.
+  - `ledgerstream.reconciliation.orphans.cleaned` (Counter): Total acumulado de diretórios de staging órfãos expurgados com sucesso.
+  - `ledgerstream.reconciliation.attachments.recovered` (Counter): Total acumulado de anexos STAGED regularizados para PERMANENT ou compensados para PURGED.
+  - `ledgerstream.reconciliation.outbox.reconstructed` (Counter): Total acumulado de registros de outbox reconstituídos a partir de eventos COMMITTED órfãos.
+  - `ledgerstream.reconciliation.failures` (Counter): Total acumulado de falhas isoladas de I/O ou banco tratadas sem abortar o ciclo.
+  - **Gauges de Última Execução:**
+    - `ledgerstream.reconciliation.last.orphans.cleaned`
+    - `ledgerstream.reconciliation.last.attachments.recovered`
+    - `ledgerstream.reconciliation.last.outbox.repairs`
+    - `ledgerstream.reconciliation.last.failures`
+    - `ledgerstream.reconciliation.last.completed.at`
+
+- **Dispatcher Outbox (`OutboxDispatcherService`):**
+  - `ledgerstream.dispatcher.attempts` (Counter): Tentativas de processamento de entradas da outbox.
+  - `ledgerstream.dispatcher.published` (Counter): Mensagens efetivamente confirmadas pelo broker (ACK) e com status `PUBLISHED`/`DISPATCHED` persistido.
+  - `ledgerstream.dispatcher.failed` (Counter): Mensagens que esgotaram a cota de retentativas (`max-attempts`) e foram marcadas como `FAILED`.
+  - `ledgerstream.dispatcher.deferred` (Counter): Mensagens reagendadas (adiadas) sem queimar retentativas (ex.: anexo ainda não promovido, timeouts de confirm ou retentativas com backoff).
+  - `ledgerstream.dispatcher.duration` (Timer): Duração da publicação e confirmação por lote/mensagem.
+
+#### 2. Endpoint Operacional Administrativo
+
+- `POST /api/v1/admin/reconcile`:
+  - Dispara um ciclo imediato e síncrono de `reconcileAll()`.
+  - Retorna `200 OK` com o payload canônico `ReconciliationReport` em formato JSON, detalhando timestamps de início/fim, contadores de itens regularizados e quaisquer mensagens de erro isoladas.
+  - Testado via `AdminReconciliationControllerTest` (slice web MockMvc) e `AdminReconciliationControllerIT` (integração ponta a ponta com PostgreSQL Testcontainer validando incremento no `MeterRegistry`).
+

@@ -22,6 +22,8 @@ tags:
     description: Planned settlement event ingestion and retrieval
   - name: Audit
     description: Immutable audit trail inspection for compliance and tracing
+  - name: Operations
+    description: Administrative and operational maintenance endpoints
 
 paths:
   /api/v1/settlements:
@@ -213,6 +215,23 @@ paths:
                 items:
                   $ref: '#/components/schemas/AuditLogEntry'
 
+  /api/v1/admin/reconcile:
+    post:
+      tags:
+        - Operations
+      summary: Trigger on-demand reconciliation of orphaned staging files, pending promotions, and outbox integrity
+      description: >
+        Executes a full reconciliation cycle immediately: purges unreferenced orphaned staging files
+        exceeding the grace period, regularizes STAGED attachments with committed events, and
+        reconstructs missing outbox entries or aligns event/outbox statuses. Returns a detailed report.
+      responses:
+        '200':
+          description: Reconciliation completed. Returns detailed counts and any isolated item failures.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationReport'
+
 components:
   schemas:
     SettlementIngestRequest:
@@ -374,3 +393,34 @@ components:
         path:
           type: string
           example: "/api/v1/settlements"
+
+    ReconciliationReport:
+      type: object
+      description: Summary of an executed reconciliation cycle.
+      properties:
+        startedAt:
+          type: string
+          format: date-time
+          example: "2026-10-01T20:18:39.023Z"
+        completedAt:
+          type: string
+          format: date-time
+          example: "2026-10-01T20:18:39.068Z"
+        orphanDirectoriesRemoved:
+          type: integer
+          example: 0
+          description: Number of unreferenced staging attempt directories older than grace period that were deleted.
+        attachmentsReconciled:
+          type: integer
+          example: 0
+          description: Number of STAGED attachments whose permanent files were regularized or purged.
+        outboxRepairs:
+          type: integer
+          example: 0
+          description: Number of outbox rows reconstructed or status-aligned.
+        failures:
+          type: array
+          items:
+            type: string
+          example: []
+          description: List of isolated item error messages encountered during the cycle.

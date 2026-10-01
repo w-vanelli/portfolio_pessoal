@@ -9,6 +9,11 @@ import com.wvanelli.ledgerstream.domain.SettlementStatus;
 import com.wvanelli.ledgerstream.infrastructure.messaging.DispatcherProperties;
 import com.wvanelli.ledgerstream.repository.SettlementEventRepository;
 import com.wvanelli.ledgerstream.repository.SettlementOutboxRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
@@ -50,8 +55,8 @@ import java.util.concurrent.ThreadLocalRandom;
  * <h3>Timeout semantics</h3>
  * The five-second timeout limits the wait for the broker's publisher confirm. Timeout
  * is treated as <b>unknown outcome</b>: the broker may have received and routed the
- * message. The entry is rescheduled for retry without counting the attempt as a
- * definitive failure, because a duplicate delivery is preferable to a lost event.
+ * message. The entry consumes the existing retry budget and the failed metric records
+ * the unsuccessful local processing outcome, not proof of broker rejection.
  * Consumers must be prepared for duplicates.
  *
  * <h3>Attachment readiness</h3>
@@ -85,12 +90,27 @@ public class OutboxDispatcherService {
     private final TransactionTemplate transactionTemplate;
     private final String exchangeName;
 
+    private final MeterRegistry registry;
+    private final Counter attempts, published, failed, deferred;
+    private final Timer duration;
+    private enum Outcome { SKIPPED, DEFERRED, PUBLISHED, FAILED }
+
+    public OutboxDispatcherService(SettlementOutboxRepository outboxRepository,
+                                   SettlementEventRepository eventRepository,
+                                   RabbitTemplate rabbitTemplate, DispatcherProperties properties,
+                                   PlatformTransactionManager transactionManager, String exchangeName) {
+        this(outboxRepository, eventRepository, rabbitTemplate, properties, transactionManager,
+                exchangeName, new SimpleMeterRegistry());
+    }
+
+    @Autowired
     public OutboxDispatcherService(SettlementOutboxRepository outboxRepository,
                                    SettlementEventRepository eventRepository,
                                    RabbitTemplate rabbitTemplate,
                                    DispatcherProperties properties,
                                    PlatformTransactionManager transactionManager,
-                                   @Value("${ledgerstream.queue.exchange:ledger.settlement.exchange}") String exchangeName) {
+                                   @Value("${ledgerstream.queue.exchange:ledger.settlement.exchange}") String exchangeName,
+                                   MeterRegistry registry) {
         this.outboxRepository = outboxRepository;
         this.eventRepository = eventRepository;
         this.rabbitTemplate = rabbitTemplate;
@@ -98,6 +118,12 @@ public class OutboxDispatcherService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.exchangeName = exchangeName;
+        this.registry = registry;
+        attempts = registry.counter("ledgerstream.dispatcher.attempts");
+        published = registry.counter("ledgerstream.dispatcher.published");
+        failed = registry.counter("ledgerstream.dispatcher.failed");
+        deferred = registry.counter("ledgerstream.dispatcher.deferred");
+        duration = registry.timer("ledgerstream.dispatcher.duration");
     }
 
     /**
@@ -108,24 +134,35 @@ public class OutboxDispatcherService {
     @Scheduled(fixedDelayString = "${ledgerstream.dispatcher.poll-interval-ms:5000}",
                initialDelayString = "${ledgerstream.dispatcher.initial-delay-ms:5000}")
     public void dispatchPendingEntries() {
-        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        List<SettlementOutboxEntry> pendingBatch = outboxRepository
-                .findTop100ByStatusAndAvailableAtLessThanEqualOrderByCreatedAtAsc(OutboxStatus.PENDING, now);
-
-        for (SettlementOutboxEntry entry : pendingBatch) {
+        Timer.Sample sample = Timer.start(registry);
+        try {
+            List<SettlementOutboxEntry> pendingBatch;
             try {
-                processSingleEntry(entry.getId());
-            } catch (Exception e) {
-                log.error("Failed to process outbox entry {}", entry.getId(), e);
+                pendingBatch = outboxRepository
+                        .findTop100ByStatusAndAvailableAtLessThanEqualOrderByCreatedAtAsc(
+                                OutboxStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC));
+            } catch (RuntimeException ex) {
+                failed.increment();
+                throw ex;
             }
+            for (SettlementOutboxEntry entry : pendingBatch) {
+                try {
+                    processSingleEntry(entry.getId());
+                } catch (Exception ex) {
+                    failed.increment(); // One failure per item, including a failed commit after NACK.
+                    log.error("Failed to process outbox entry {}", entry.getId(), ex);
+                }
+            }
+        } finally {
+            sample.stop(duration);
         }
     }
 
     private void processSingleEntry(UUID entryId) {
-        transactionTemplate.executeWithoutResult(status -> {
+        Outcome outcome = transactionTemplate.execute(status -> {
             SettlementOutboxEntry entry = outboxRepository.findLockedById(entryId).orElseThrow();
             if (entry.getStatus() != OutboxStatus.PENDING) {
-                return;
+                return Outcome.SKIPPED;
             }
 
             // --- Attachment readiness gate ---
@@ -139,7 +176,7 @@ public class OutboxDispatcherService {
                         .plus(properties.getInitialBackoffMs(), java.time.temporal.ChronoUnit.MILLIS);
                 entry.deferWithoutAttempt(retryAt);
                 outboxRepository.saveAndFlush(entry);
-                return;
+                return Outcome.DEFERRED;
             }
 
             // --- Build AMQP message ---
@@ -158,7 +195,9 @@ public class OutboxDispatcherService {
 
             CorrelationData correlationData = new CorrelationData(correlationId);
 
+            Outcome result = Outcome.FAILED;
             try {
+                attempts.increment();
                 rabbitTemplate.send(exchangeName, "settlement.accepted", message, correlationData);
 
                 // Wait up to 5 seconds for the broker's publisher confirm.
@@ -168,7 +207,8 @@ public class OutboxDispatcherService {
                     // Success: broker accepted and routed the message.
                     entry.markPublished(OffsetDateTime.now(ZoneOffset.UTC));
                     event.transitionTo(SettlementStatus.DISPATCHED);
-                    log.info("Published outbox entry {} (settlement {}, correlation {})",
+                    result = Outcome.PUBLISHED;
+                    log.debug("Broker acknowledged outbox entry {} (settlement {}, correlation {})",
                             entry.getId(), entry.getSettlementId(), correlationId);
                 } else if (!confirm.isAck()) {
                     String reason = "Broker NACK: " + confirm.getReason();
@@ -189,6 +229,7 @@ public class OutboxDispatcherService {
                 log.warn("Confirm timeout for entry {} (correlation {}). {}", entry.getId(), correlationId, reason);
                 handleFailure(entry, reason);
             } catch (Exception e) {
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
                 String reason = "Exception: " + e.getClass().getSimpleName() + ": " + e.getMessage();
                 log.error("Dispatch exception for entry {} (correlation {}): {}",
                         entry.getId(), correlationId, reason, e);
@@ -196,7 +237,15 @@ public class OutboxDispatcherService {
             }
 
             outboxRepository.saveAndFlush(entry);
+            return result;
         });
+        // A broker ACK alone is insufficient: publish and deferral counts require DB commit.
+        switch (outcome) {
+            case PUBLISHED -> published.increment();
+            case DEFERRED -> deferred.increment();
+            case FAILED -> failed.increment();
+            case SKIPPED -> { }
+        }
     }
 
     /**

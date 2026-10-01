@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wvanelli.ledgerstream.domain.*;
 import com.wvanelli.ledgerstream.repository.*;
 import com.wvanelli.ledgerstream.storage.*;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -28,6 +29,7 @@ class SettlementReconciliationServiceTest {
     SettlementOutboxRepository outbox;
     StagingStorageService storage;
     SettlementReconciliationService service;
+    SimpleMeterRegistry registry;
     ReconciliationProperties properties;
     ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     Map<Long, SettlementEvent> eventRows = new LinkedHashMap<>();
@@ -40,6 +42,7 @@ class SettlementReconciliationServiceTest {
         outbox = mock(SettlementOutboxRepository.class);
         storage = spy(new StagingStorageServiceImpl(root.resolve("staging").toString(), root.resolve("permanent").toString()));
         properties = new ReconciliationProperties();
+        registry = new SimpleMeterRegistry();
         var tm = new AbstractPlatformTransactionManager() {
             @Override protected Object doGetTransaction() { return new Object(); }
             @Override protected void doBegin(Object tx, TransactionDefinition definition) {
@@ -48,7 +51,7 @@ class SettlementReconciliationServiceTest {
             @Override protected void doCommit(DefaultTransactionStatus status) { }
             @Override protected void doRollback(DefaultTransactionStatus status) { }
         };
-        service = new SettlementReconciliationService(events, attachments, outbox, storage, tm, mapper, properties);
+        service = new SettlementReconciliationService(events, attachments, outbox, storage, tm, mapper, properties, registry);
         when(events.findLockedById(anyLong())).thenAnswer(i -> Optional.ofNullable(eventRows.get(i.getArgument(0))));
         when(attachments.findByStatus(AttachmentStatus.STAGED)).thenAnswer(i -> attachmentRows.stream()
                 .filter(a -> a.getStatus() == AttachmentStatus.STAGED).toList());
@@ -184,6 +187,10 @@ class SettlementReconciliationServiceTest {
         var report = service.reconcileAll();
         assertThat(report.attachmentsReconciled()).isEqualTo(1);
         assertThat(report.failures()).anyMatch(s -> s.contains("Content absent"));
+        assertThat(registry.get("ledgerstream.reconciliation.runs").counter().count()).isEqualTo(1);
+        assertThat(registry.get("ledgerstream.reconciliation.attachments.recovered").counter().count()).isEqualTo(1);
+        assertThat(registry.get("ledgerstream.reconciliation.failures").counter().count()).isGreaterThanOrEqualTo(1);
+        assertThat(registry.get("ledgerstream.reconciliation.duration").timer().count()).isEqualTo(1);
         assertThat(a.getStatus()).isEqualTo(AttachmentStatus.STAGED); assertThat(a.getStoragePath()).isEqualTo(path);
     }
 
@@ -280,14 +287,19 @@ class SettlementReconciliationServiceTest {
         var report = service.reconcileAll();
         assertThat(report.outboxRepairs()).isEqualTo(1);
         assertThat(report.failures()).hasSize(1);
+        assertThat(registry.get("ledgerstream.reconciliation.outbox.reconstructed").counter().count()).isEqualTo(1);
+        assertThat(registry.get("ledgerstream.reconciliation.failures").counter().count()).isEqualTo(1);
+        assertThat(registry.get("ledgerstream.reconciliation.last.failures").gauge().value()).isEqualTo(1);
         assertThatThrownBy(() -> report.failures().add("mutable")).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test void scheduledRunHonorsEnabledWhileManualRecoveryIsAvailable() {
         properties.setEnabled(false); service.scheduledReconciliation();
         verifyNoInteractions(events, attachments, outbox);
+        assertThat(registry.get("ledgerstream.reconciliation.runs").counter().count()).isZero();
         event(SettlementStatus.COMMITTED);
         assertThat(service.reconcileAll().outboxRepairs()).isEqualTo(1);
+        assertThat(registry.get("ledgerstream.reconciliation.runs").counter().count()).isEqualTo(1);
     }
 
     @Test void rejectsNegativeGracePeriod() {
