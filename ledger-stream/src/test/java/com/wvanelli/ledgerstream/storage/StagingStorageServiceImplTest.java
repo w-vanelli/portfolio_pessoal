@@ -85,17 +85,16 @@ class StagingStorageServiceImplTest {
     }
 
     @Test
-    void shouldRejectPromotionWhenDestinationExists() throws IOException {
+    void shouldRecoverEmptyReservationAfterCrash() throws IOException {
         InputStream in1 = new ByteArrayInputStream("data1".getBytes());
         StagingTicket ticket1 = service.stage("file.txt", "text/plain", in1);
         
-        // Manually create the destination directory to simulate conflict
+        // Crash after exclusive reservation, before the atomic move
         Path sourcePath = Path.of(ticket1.storagePath());
         Path destPath = permanentDir.resolve(sourcePath.getParent().getFileName());
         Files.createDirectory(destPath);
         
-        assertThatThrownBy(() -> service.promoteToPermanent(ticket1.storagePath()))
-                .isInstanceOf(IOException.class);
+        assertThat(service.promoteToPermanent(ticket1.storagePath())).hasContent("data1");
     }
 
     @Test

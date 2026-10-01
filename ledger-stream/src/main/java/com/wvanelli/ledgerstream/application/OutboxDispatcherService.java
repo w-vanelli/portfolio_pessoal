@@ -123,7 +123,7 @@ public class OutboxDispatcherService {
 
     private void processSingleEntry(UUID entryId) {
         transactionTemplate.executeWithoutResult(status -> {
-            SettlementOutboxEntry entry = outboxRepository.findById(entryId).orElseThrow();
+            SettlementOutboxEntry entry = outboxRepository.findLockedById(entryId).orElseThrow();
             if (entry.getStatus() != OutboxStatus.PENDING) {
                 return;
             }
@@ -131,7 +131,7 @@ public class OutboxDispatcherService {
             // --- Attachment readiness gate ---
             // Verify all attachments have been promoted to permanent storage.
             // If any are still STAGED, defer without consuming a retry attempt.
-            SettlementEvent event = eventRepository.findById(entry.getSettlementId()).orElseThrow();
+            SettlementEvent event = eventRepository.findLockedById(entry.getSettlementId()).orElseThrow();
             if (!allAttachmentsReady(event)) {
                 log.info("Deferring dispatch of entry {} (settlement {}): attachments not yet promoted to permanent storage",
                         entry.getId(), entry.getSettlementId());

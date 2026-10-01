@@ -1,6 +1,7 @@
 package com.wvanelli.ledgerstream.repository;
 
 import com.wvanelli.ledgerstream.domain.SettlementAttachment;
+import com.wvanelli.ledgerstream.domain.AttachmentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -11,6 +12,9 @@ import java.util.List;
  */
 @Repository
 public interface SettlementAttachmentRepository extends JpaRepository<SettlementAttachment, Long> {
+
+    boolean existsByStoragePath(String storagePath);
+    List<SettlementAttachment> findByStatus(AttachmentStatus status);
 
     /**
      * Finds all attachments linked to a specific settlement event.

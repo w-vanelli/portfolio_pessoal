@@ -22,6 +22,10 @@ spring:
       - org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration
 
 ledgerstream:
+  dispatcher:
+    initial-delay-ms: 999999999
+  reconciliation:
+    enabled: false
   storage:
     staging-dir: ${java.io.tmpdir}/ledgerstream-test/staging
     permanent-dir: ${java.io.tmpdir}/ledgerstream-test/permanent

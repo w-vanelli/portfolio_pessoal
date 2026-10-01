@@ -95,8 +95,8 @@ class OutboxDispatcherServiceTest {
     private void stubBatchAndEntry(SettlementOutboxEntry entry, SettlementEvent event) {
         when(outboxRepository.findTop100ByStatusAndAvailableAtLessThanEqualOrderByCreatedAtAsc(eq(OutboxStatus.PENDING), any()))
                 .thenReturn(List.of(entry));
-        when(outboxRepository.findById(entry.getId())).thenReturn(Optional.of(entry));
-        when(eventRepository.findById(event.getId())).thenReturn(Optional.of(event));
+        when(outboxRepository.findLockedById(entry.getId())).thenReturn(Optional.of(entry));
+        when(eventRepository.findLockedById(event.getId())).thenReturn(Optional.of(event));
     }
 
     private void stubBrokerAck() {
@@ -258,7 +258,7 @@ class OutboxDispatcherServiceTest {
         // Exhaust all attempts
         for (int i = 0; i < properties.getMaxAttempts(); i++) {
             // Re-stub since findById needs to return updated entry
-            when(outboxRepository.findById(entry.getId())).thenReturn(Optional.of(entry));
+            when(outboxRepository.findLockedById(entry.getId())).thenReturn(Optional.of(entry));
             dispatcherService.dispatchPendingEntries();
         }
 
@@ -279,7 +279,7 @@ class OutboxDispatcherServiceTest {
         // Exhaust all attempts
         for (int i = 0; i < properties.getMaxAttempts(); i++) {
             // Re-stub since findById needs to return updated entry
-            when(outboxRepository.findById(entry.getId())).thenReturn(Optional.of(entry));
+            when(outboxRepository.findLockedById(entry.getId())).thenReturn(Optional.of(entry));
             dispatcherService.dispatchPendingEntries();
         }
 

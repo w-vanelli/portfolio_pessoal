@@ -115,7 +115,7 @@ public class SettlementApplicationService {
         try {
             Path permanent = stagingStorageService.promoteToPermanent(ticket.storagePath());
             transaction.executeWithoutResult(status -> {
-                SettlementEvent persisted = repository.findById(saved.getId()).orElseThrow();
+                SettlementEvent persisted = repository.findLockedById(saved.getId()).orElseThrow();
                 SettlementAttachment attachment = persisted.getAttachments().stream()
                         .filter(a -> a.getStoragePath().equals(ticket.storagePath())).findFirst().orElseThrow();
                 attachment.updateStoragePath(permanent.toString());

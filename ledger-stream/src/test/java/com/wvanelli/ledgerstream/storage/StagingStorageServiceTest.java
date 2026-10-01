@@ -43,7 +43,9 @@ class StagingStorageServiceTest {
         assertThatThrownBy(() -> storage.promoteToPermanent(ticket.storagePath()))
                 .isInstanceOf(AtomicMoveNotSupportedException.class);
         assertThat(Path.of(ticket.storagePath())).hasContent("proof");
-        try (var paths = Files.list(root.resolve("permanent"))) { assertThat(paths).isEmpty(); }
+        try (var paths = Files.list(root.resolve("permanent"))) {
+            assertThat(paths.map(p -> p.getFileName().toString())).containsExactly(".promotion.lock");
+        }
     }
 
     @Test void reservationPreventsOverwritingExistingDestination() throws Exception {

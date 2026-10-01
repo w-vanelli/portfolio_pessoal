@@ -6,6 +6,8 @@ spring:
     clean-disabled: false
 
 ledgerstream:
+  reconciliation:
+    enabled: false
   storage:
     staging-dir: "/ledgerstream-staging"
     permanent-dir: "/ledgerstream-permanent"

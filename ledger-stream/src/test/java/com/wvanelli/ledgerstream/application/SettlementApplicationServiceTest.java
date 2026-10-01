@@ -82,7 +82,7 @@ class SettlementApplicationServiceTest {
             assertThat(transactionManager.committed).isTrue();
             return Path.of("permanent/file.txt");
         });
-        when(repository.findById(any())).thenAnswer(invocation -> {
+        when(repository.findLockedById(any())).thenAnswer(invocation -> {
             SettlementEvent persisted = new SettlementEvent(key, "dummy", "ACC-123", "USD",
                     new MonetaryAmount("100"), SettlementType.CARD_PAYOUT, "Test");
             persisted.addAttachment(new com.wvanelli.ledgerstream.domain.SettlementAttachment(
