@@ -9,6 +9,6 @@ ledgerstream:
   reconciliation:
     enabled: false
   storage:
-    staging-dir: "/ledgerstream-staging"
-    permanent-dir: "/ledgerstream-permanent"
+    staging-dir: ${java.io.tmpdir}/ledgerstream-messaging-test/staging
+    permanent-dir: ${java.io.tmpdir}/ledgerstream-messaging-test/permanent
 
