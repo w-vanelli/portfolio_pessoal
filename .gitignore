@@ -7,6 +7,8 @@
 
 # Frameworks de agentes / IA / scaffolding externo (Reversa, Kiro, etc.)
 .reversa/
+_reversa_sdd/
+/ledger-stream/_reversa_sdd/
 .kiro/
 .amazonq/
 .claude/
@@ -14,6 +16,7 @@
 .cursorrules
 .roorules
 .windsurfrules
+/tmp/
 /ledger-stream/.agents/
 /ledger-stream/.amazonq/
 /ledger-stream/.claude/
