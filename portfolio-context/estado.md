@@ -1,15 +1,15 @@
 # Estado do portfólio
 
-Atualizado em 02/10/2026. Fase: Semana 4 — consolidação dos Incrementos 4 a 8 (Outbox Dispatcher, Consumer CQRS, Reconciliação Pós-Falha, Observabilidade/Admin e CI Green).
+Atualizado em 02/10/2026. Fase: Semana 4 — consolidação dos Incrementos 4 a 9 (Outbox Dispatcher, Consumer CQRS, Reconciliação Pós-Falha, Observabilidade/Admin, Engenharia de Caos e CI Green).
 
 ## Base verificada e ambiente
 
-- GitHub conectado: `w-vanelli/portfolio_pessoal`, branch `main`, commit mais recente `f0d9fda`.
+- GitHub conectado: `w-vanelli/portfolio_pessoal`, branch `main`, commit mais recente `24a7023`.
 - Ambiente de desenvolvimento: Windows (PowerShell) e runner GitHub Actions (Ubuntu 22.04).
 - Stack conferida: Java 21 (Temurin), Spring Boot 3.4.0, Maven 3.9.9, Spring Data JPA/Hibernate, Flyway, PostgreSQL 16 (Testcontainers), RabbitMQ 3.13 (Testcontainers), Micrometer Core.
-- Suíte de testes: 100% verde (124 testes unitários e de slice + 43 testes de integração com Testcontainers PostgreSQL e RabbitMQ).
+- Suíte de testes: 100% verde (124 testes unitários e de slice + 45 testes de integração com Testcontainers PostgreSQL e RabbitMQ; total 169 testes).
 
-## Evolução Implementada (Incrementos 1 a 8)
+## Evolução Implementada (Incrementos 1 a 9)
 
 1. **Incremento 1 & 2 — Fundação, Domínio e Schema:**
    - Value object `MonetaryAmount` (escala fixa 2 casas, arredondamento `HALF_EVEN`, aritmética segura).
@@ -37,9 +37,12 @@ Atualizado em 02/10/2026. Fase: Semana 4 — consolidação dos Incrementos 4 a 
    - Documentação OpenAPI (`docs/openapi.yaml`) e guia de arquitetura (`docs/improvement-integration.md`) sincronizados.
 7. **Correção de Portabilidade CI (Linux / Windows):**
    - Resolução de caminhos no perfil `messaging-integration-test`: substituição de caminhos fixos de raiz por `${java.io.tmpdir}/ledgerstream-messaging-test/...`, corrigindo falhas de permissão no runner Ubuntu.
+8. **Incremento 9 — Simulação de Falhas & Engenharia de Caos:**
+   - `StorageAndBrokerFailureChaosIT`: Teste de integração ponta a ponta simulando falha transiente no broker RabbitMQ (`AmqpException`) durante a confirmação de outbox.
+   - Validação da retenção de registros em estado de falha na outbox, auto-recuperação acionando `SettlementReconciliationService.reconcileOutboxIntegrity()` e garantia de consistência eventual até a projeção CQRS via leitura.
 
 ## Status das Validações
 
 - `.\mvnw.cmd test`: **124 testes unitários e de slice aprovados, 0 falhas**.
-- `.\mvnw.cmd verify -DskipITs=false`: **43 testes de integração Testcontainers aprovados, 0 falhas**. Total: **167 testes**.
-- Build local 100% verde no Windows; commit `f0d9fda` publicado na branch `main`.
+- `.\mvnw.cmd verify -DskipITs=false`: **45 testes de integração Testcontainers aprovados, 0 falhas**. Total: **169 testes**.
+- Build local 100% verde no Windows; commit `24a7023` publicado na branch `main`.
