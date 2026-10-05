@@ -2,6 +2,7 @@ package com.wvanelli.ledgerstream.repository;
 
 import com.wvanelli.ledgerstream.domain.SettlementEvent;
 import com.wvanelli.ledgerstream.domain.SettlementStatus;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -33,8 +34,9 @@ public interface SettlementEventRepository extends JpaRepository<SettlementEvent
     List<Long> findReconciliationIds();
 
     /**
-     * Finds a settlement event by its unique idempotency key.
+     * Finds a settlement event by its unique idempotency key with attachments eagerly loaded.
      */
+    @EntityGraph(attributePaths = {"attachments"})
     Optional<SettlementEvent> findByIdempotencyKey(UUID idempotencyKey);
 
     /**

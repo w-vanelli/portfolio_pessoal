@@ -30,6 +30,8 @@ class SettlementApplicationServiceIT extends AbstractIntegrationTest {
 
     @Test void commitsEventAndPromotedAttachmentMetadata() throws Exception {
         var event = service.registerSettlement(command(UUID.randomUUID(), "1", "proof"));
+        assertThat(event.isNew()).isTrue();
+        assertThat(event.isReplay()).isFalse();
         assertThat(events.findById(event.getId()).orElseThrow().getStatus()).isEqualTo(SettlementStatus.COMMITTED);
         var outboxEntry = outbox.findBySettlementId(event.getId()).orElseThrow();
         assertThat(outboxEntry.getStatus()).isEqualTo(OutboxStatus.PENDING);
@@ -38,8 +40,10 @@ class SettlementApplicationServiceIT extends AbstractIntegrationTest {
         var attachment = attachments.findBySettlementEventId(event.getId()).getFirst();
         assertThat(attachment.getStatus()).isEqualTo(AttachmentStatus.PERMANENT);
         assertThat(Path.of(attachment.getStoragePath())).hasContent("proof");
-        assertThat(service.registerSettlement(command(event.getIdempotencyKey(), "1.00", "proof")).getId())
-                .isEqualTo(event.getId());
+        var replayed = service.registerSettlement(command(event.getIdempotencyKey(), "1.00", "proof"));
+        assertThat(replayed.isReplay()).isTrue();
+        assertThat(replayed.isNew()).isFalse();
+        assertThat(replayed.getId()).isEqualTo(event.getId());
         assertThatThrownBy(() -> service.registerSettlement(command(event.getIdempotencyKey(), "1", "changed")))
                 .isInstanceOf(IdempotencyConflictException.class);
         assertThat(Path.of(attachment.getStoragePath())).hasContent("proof");

@@ -2,10 +2,11 @@ openapi: 3.0.3
 info:
   title: LedgerStream API
   description: >
-    REST contract for LedgerStream. Operational settlement projection query endpoints
-    (/api/v1/settlements/{id} and /api/v1/settlements?accountId=...) are implemented and verified.
-    Ingestion endpoint remains planned. LedgerStream records settlement events without moving money
-    or calculating balances. Outbox dispatch, consumer idempotency and projection storage are verified.
+    REST contract for LedgerStream. Settlement ingestion endpoint (/api/v1/settlements POST)
+    and operational settlement projection query endpoints (/api/v1/settlements/{id} and
+    /api/v1/settlements?accountId=...) are implemented and verified.
+    LedgerStream records settlement events without moving money or calculating balances.
+    Outbox dispatch, consumer idempotency and projection storage are verified.
 
   version: 1.0.0
   contact:
@@ -19,7 +20,7 @@ servers:
 
 tags:
   - name: Settlements
-    description: Planned settlement event ingestion and retrieval
+    description: Settlement event ingestion and retrieval
   - name: Audit
     description: Immutable audit trail inspection for compliance and tracing
   - name: Operations

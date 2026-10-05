@@ -295,3 +295,20 @@ Para garantir visibilidade em tempo real sobre a saúde do processo assíncrono 
   - Retorna `200 OK` com o payload canônico `ReconciliationReport` em formato JSON, detalhando timestamps de início/fim, contadores de itens regularizados e quaisquer mensagens de erro isoladas.
   - Testado via `AdminReconciliationControllerTest` (slice web MockMvc) e `AdminReconciliationControllerIT` (integração ponta a ponta com PostgreSQL Testcontainer validando incremento no `MeterRegistry`).
 
+---
+
+### Increment 10 — Endpoint de Ingestão de Liquidação (POST /api/v1/settlements)
+
+Implementado e verificado: Endpoint REST de ingestão com suporte a `multipart/form-data` e garantia estrita de idempotência por payload.
+- **Contrato e Roteamento**:
+  - `POST /api/v1/settlements`: Recebe cabeçalho obrigatório `X-Idempotency-Key` (UUID), `metadata` (JSON mapeado em `SettlementIngestRequest`) e anexo opcional `attachment` (`MultipartFile`).
+  - Distinção semântica entre nova aceitação durável (`201 Created` com header `Location`) e reprocessamento idempotente (`200 OK`).
+  - O resultado de persistência retorna encapsulado em `SettlementRegistrationResult` via `SettlementApplicationService.registerSettlement()`.
+- **Tratamento de Exceções (`GlobalExceptionHandler`)**:
+  - Mapeia `IdempotencyConflictException` para `409 Conflict`.
+  - Mapeia `InvalidChargebackException` para `400 Bad Request`.
+  - Mapeia falhas estruturais HTTP (ausência de cabeçalho obrigatório, ausência de parte multipart, corpo ilegível ou validação) para `400 Bad Request`.
+- **Validação e Testes**:
+  - `SettlementIngestionControllerTest` (slice MockMvc) cobrindo criação (201), replay idempotente (200), payload conflict (409), chargeback inválido (400) e cabeçalhos ausentes (400).
+  - `SettlementIngestionControllerIT` (integração com Testcontainers PostgreSQL) cobrindo o fluxo completo de ingestão e isolamento de storage em `${java.io.tmpdir}`.
+

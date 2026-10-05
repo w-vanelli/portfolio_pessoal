@@ -90,9 +90,11 @@ class SettlementApplicationServiceTest {
             return Optional.of(persisted);
         });
 
-        SettlementEvent result = service.registerSettlement(cmdWithFile);
+        SettlementRegistrationResult result = service.registerSettlement(cmdWithFile);
 
         assertThat(result).isNotNull();
+        assertThat(result.isNew()).isTrue();
+        assertThat(result.event()).isNotNull();
         verify(stagingStorageService).stage(eq("file.txt"), eq("text/plain"), any());
         verify(repository).saveAndFlush(any(SettlementEvent.class));
         verify(stagingStorageService).promoteToPermanent("temp/file.txt");
@@ -109,9 +111,10 @@ class SettlementApplicationServiceTest {
 
         when(repository.findByIdempotencyKey(key)).thenReturn(Optional.of(existing));
 
-        SettlementEvent result = service.registerSettlement(command);
+        SettlementRegistrationResult result = service.registerSettlement(command);
 
-        assertThat(result).isEqualTo(existing);
+        assertThat(result.isReplay()).isTrue();
+        assertThat(result.event()).isEqualTo(existing);
         verify(repository, never()).saveAndFlush(any());
     }
 
@@ -149,9 +152,10 @@ class SettlementApplicationServiceTest {
 
         when(repository.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException("Unique constraint"));
 
-        SettlementEvent result = service.registerSettlement(cmdWithFile);
+        SettlementRegistrationResult result = service.registerSettlement(cmdWithFile);
 
-        assertThat(result).isEqualTo(existing);
+        assertThat(result.isReplay()).isTrue();
+        assertThat(result.event()).isEqualTo(existing);
         verify(stagingStorageService).compensateStaging("temp/file.txt"); // It must cleanup the losing attempt's file
         verify(stagingStorageService, never()).promoteToPermanent(any());
     }
@@ -196,8 +200,9 @@ class SettlementApplicationServiceTest {
 
         when(stagingStorageService.promoteToPermanent("temp/file.txt")).thenThrow(new IOException("Disk full"));
 
-        SettlementEvent result = service.registerSettlement(cmdWithFile);
+        SettlementRegistrationResult result = service.registerSettlement(cmdWithFile);
 
+        assertThat(result.isNew()).isTrue();
         assertThat(result.getStatus()).isEqualTo(SettlementStatus.COMMITTED);
         verify(stagingStorageService, never()).compensateStaging(any()); // Should preserve files needed for recovery
     }

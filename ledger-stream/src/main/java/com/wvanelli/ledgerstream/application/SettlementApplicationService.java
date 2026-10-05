@@ -48,7 +48,7 @@ public class SettlementApplicationService {
         this.objectMapper = objectMapper;
     }
 
-    public SettlementEvent registerSettlement(RegisterSettlementCommand command) throws IOException {
+    public SettlementRegistrationResult registerSettlement(RegisterSettlementCommand command) throws IOException {
         // An ambient transaction would postpone commit beyond this method's promotion step.
         if (TransactionSynchronizationManager.isActualTransactionActive()) {
             throw new IllegalStateException("Settlement registration must be called outside a transaction");
@@ -72,7 +72,7 @@ public class SettlementApplicationService {
         }
         if (existing.isPresent()) {
             cleanupStaging(ticket);
-            return replay(existing.get(), checksum);
+            return SettlementRegistrationResult.replay(replay(existing.get(), checksum));
         }
 
         AtomicInteger completion = new AtomicInteger(TransactionSynchronization.STATUS_UNKNOWN);
@@ -90,7 +90,7 @@ public class SettlementApplicationService {
                 cleanupStaging(ticket);
                 if (failure instanceof DataIntegrityViolationException) {
                     Optional<SettlementEvent> winner = repository.findByIdempotencyKey(command.idempotencyKey());
-                    if (winner.isPresent()) return replay(winner.get(), checksum);
+                    if (winner.isPresent()) return SettlementRegistrationResult.replay(replay(winner.get(), checksum));
                 }
             } else {
                 // A commit exception is not proof of rollback. Do not delete recoverable bytes.
@@ -101,7 +101,7 @@ public class SettlementApplicationService {
         }
 
         if (ticket != null) promoteAfterCommit(saved, ticket);
-        return saved;
+        return SettlementRegistrationResult.created(saved);
     }
 
     private SettlementEvent replay(SettlementEvent existing, String checksum) {
