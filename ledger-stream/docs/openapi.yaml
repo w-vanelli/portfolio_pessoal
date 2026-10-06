@@ -2,9 +2,9 @@ openapi: 3.0.3
 info:
   title: LedgerStream API
   description: >
-    REST contract for LedgerStream. Settlement ingestion endpoint (/api/v1/settlements POST)
-    and operational settlement projection query endpoints (/api/v1/settlements/{id} and
-    /api/v1/settlements?accountId=...) are implemented and verified.
+    REST contract for LedgerStream. Settlement ingestion endpoint (/api/v1/settlements POST),
+    operational settlement projection query endpoints (/api/v1/settlements/{id},
+    /api/v1/settlements?accountId=..., and /api/v1/settlements/idempotency/{key}) are implemented and verified.
     LedgerStream records settlement events without moving money or calculating balances.
     Outbox dispatch, consumer idempotency and projection storage are verified.
 
@@ -185,7 +185,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SettlementResponse'
+                $ref: '#/components/schemas/SettlementProjectionResponse'
         '404':
           description: No settlement recorded under this key.
           content:

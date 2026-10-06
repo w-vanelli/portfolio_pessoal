@@ -147,4 +147,62 @@ class SettlementQueryControllerTest {
                 .andExpect(jsonPath("$.error").value("Bad Request"))
                 .andExpect(jsonPath("$.message").value("Query parameter 'accountId' is required"));
     }
+
+    @Test
+    @DisplayName("GET /api/v1/settlements/idempotency/{key} deve retornar 200 quando projecao existir")
+    void getByIdempotencyKeyShouldReturn200WhenFound() throws Exception {
+        UUID key = UUID.randomUUID();
+        OffsetDateTime acceptedAt = OffsetDateTime.of(2026, 9, 26, 12, 0, 0, 0, ZoneOffset.UTC);
+        OffsetDateTime processedAt = OffsetDateTime.of(2026, 9, 26, 12, 0, 1, 0, ZoneOffset.UTC);
+
+        SettlementProjectionResponse response = new SettlementProjectionResponse(
+                2001L,
+                2001L,
+                key,
+                "ACC-CORP-2",
+                "BRL",
+                "9999.99",
+                "INVOICE_SETTLEMENT",
+                null,
+                acceptedAt,
+                processedAt
+        );
+
+        when(queryService.findByIdempotencyKey(key)).thenReturn(Optional.of(response));
+
+        mockMvc.perform(get("/api/v1/settlements/idempotency/" + key)
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(2001))
+                .andExpect(jsonPath("$.settlementId").value(2001))
+                .andExpect(jsonPath("$.messageId").value(key.toString()))
+                .andExpect(jsonPath("$.accountId").value("ACC-CORP-2"))
+                .andExpect(jsonPath("$.currency").value("BRL"))
+                .andExpect(jsonPath("$.amount").value("9999.99"))
+                .andExpect(jsonPath("$.settlementType").value("INVOICE_SETTLEMENT"))
+                .andExpect(jsonPath("$.originalSettlementId").doesNotExist())
+                .andExpect(jsonPath("$.acceptedAt").exists())
+                .andExpect(jsonPath("$.processedAt").exists());
+
+        verify(queryService).findByIdempotencyKey(key);
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/settlements/idempotency/{key} deve retornar 404 quando projecao nao existir")
+    void getByIdempotencyKeyShouldReturn404WhenNotFound() throws Exception {
+        UUID key = UUID.randomUUID();
+
+        when(queryService.findByIdempotencyKey(key)).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/v1/settlements/idempotency/" + key)
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.message").value(
+                        "Settlement projection with idempotency key " + key + " not found"))
+                .andExpect(jsonPath("$.path").value("/api/v1/settlements/idempotency/" + key));
+
+        verify(queryService).findByIdempotencyKey(key);
+    }
 }

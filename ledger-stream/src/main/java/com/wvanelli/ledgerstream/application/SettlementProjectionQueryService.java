@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 @Transactional(readOnly = true)
@@ -25,6 +26,14 @@ public class SettlementProjectionQueryService {
         return projectionRepository.findFirstBySettlementIdOrderByProcessedAtDesc(id)
                 .map(SettlementProjectionResponse::from);
 
+    }
+
+    public Optional<SettlementProjectionResponse> findByIdempotencyKey(UUID key) {
+        if (key == null) {
+            throw new IllegalArgumentException("Idempotency key must not be null");
+        }
+        return projectionRepository.findById(key)
+                .map(SettlementProjectionResponse::from);
     }
 
     public List<SettlementProjectionResponse> findByAccountId(String accountId) {

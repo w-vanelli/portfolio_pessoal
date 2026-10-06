@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/settlements")
@@ -32,6 +33,15 @@ public class SettlementQueryController {
                 .orElseThrow(() -> new ResourceNotFoundException("Settlement projection with ID " + id + " not found"));
     }
 
+
+    @GetMapping("/idempotency/{key}")
+    public ResponseEntity<SettlementProjectionResponse> getByIdempotencyKey(
+            @PathVariable("key") UUID key) {
+        return queryService.findByIdempotencyKey(key)
+                .map(ResponseEntity::ok)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Settlement projection with idempotency key " + key + " not found"));
+    }
 
     @GetMapping
     public ResponseEntity<List<SettlementProjectionResponse>> getByAccountId(
