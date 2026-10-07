@@ -1,7 +1,30 @@
 services:
+  app:
+    build: .
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ledgerstream
+      SPRING_DATASOURCE_USERNAME: ledger
+      SPRING_DATASOURCE_PASSWORD: ledger_secret_pwd
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+      LEDGERSTREAM_STORAGE_STAGING_DIR: /app/storage/staging
+      LEDGERSTREAM_STORAGE_PERMANENT_DIR: /app/storage/permanent
+    ports:
+      - "8080:8080"
+    volumes:
+      - app_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - ledgerstream-network
+
   postgres:
     image: postgres:16-alpine
-    container_name: ledgerstream-postgres
     environment:
       POSTGRES_DB: ledgerstream
       POSTGRES_USER: ledger
@@ -20,7 +43,6 @@ services:
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
-    container_name: ledgerstream-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
@@ -38,6 +60,7 @@ services:
       - ledgerstream-network
 
 volumes:
+  app_storage:
   postgres_data:
   rabbitmq_data:
 
