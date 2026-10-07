@@ -9,6 +9,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -18,6 +19,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -86,6 +88,10 @@ public class SettlementEvent {
     @OneToMany(mappedBy = "settlementEvent", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<SettlementAttachment> attachments = new ArrayList<>();
 
+    @OneToMany(mappedBy = "settlementEvent", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("createdAt ASC, id ASC")
+    private List<SettlementAuditLog> auditLogs = new ArrayList<>();
+
     protected SettlementEvent() {
         // Required by JPA specification
     }
@@ -108,6 +114,7 @@ public class SettlementEvent {
         this.status = SettlementStatus.STAGED;
         this.createdAt = OffsetDateTime.now(ZoneOffset.UTC);
         this.updatedAt = this.createdAt;
+        this.auditLogs.add(new SettlementAuditLog(this, null, this.status, null, this.createdAt));
     }
 
     @PrePersist
@@ -151,6 +158,11 @@ public class SettlementEvent {
     }
 
     public void transitionTo(SettlementStatus newStatus) {
+        transitionTo(newStatus, null);
+    }
+
+    /** Details must be safe operational context, never request payloads or secrets. */
+    public void transitionTo(SettlementStatus newStatus, String eventDetails) {
         Objects.requireNonNull(newStatus, "newStatus must not be null");
 
         if (this.status == newStatus) {
@@ -169,8 +181,10 @@ public class SettlementEvent {
             throw new IllegalStateException(String.format("Invalid state transition from %s to %s", this.status, newStatus));
         }
 
+        OffsetDateTime transitionedAt = OffsetDateTime.now(ZoneOffset.UTC);
+        this.auditLogs.add(new SettlementAuditLog(this, this.status, newStatus, eventDetails, transitionedAt));
         this.status = newStatus;
-        this.updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
+        this.updatedAt = transitionedAt;
     }
 
     // Getters
@@ -232,5 +246,14 @@ public class SettlementEvent {
 
     public List<SettlementAttachment> getAttachments() {
         return Collections.unmodifiableList(attachments);
+    }
+
+    public List<SettlementAuditLog> getAuditLogs() {
+        // Also order entries appended since loading. Stable sorting retains insertion
+        // order for transient entries with the same timestamp and no generated ID yet.
+        return auditLogs.stream().sorted(Comparator
+                .comparing((SettlementAuditLog entry) -> entry.getCreatedAt().toInstant())
+                .thenComparing(SettlementAuditLog::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
     }
 }

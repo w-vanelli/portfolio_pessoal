@@ -312,3 +312,48 @@ Implementado e verificado: Endpoint REST de ingestão com suporte a `multipart/f
   - `SettlementIngestionControllerTest` (slice MockMvc) cobrindo criação (201), replay idempotente (200), payload conflict (409), chargeback inválido (400) e cabeçalhos ausentes (400).
   - `SettlementIngestionControllerIT` (integração com Testcontainers PostgreSQL) cobrindo o fluxo completo de ingestão e isolamento de storage em `${java.io.tmpdir}`.
 
+### Increment 12 — Settlement audit trail
+
+`SettlementEvent` owns `SettlementAuditLog` entries. Construction records `null -> STAGED`;
+each valid status change appends an entry with the previous/new status and a UTC timestamp.
+The existing transition matrix and producer row locks remain in force. Same-state calls,
+invalid transitions and null targets leave both status and history unchanged. Cascade persistence
+commits status and history in the same transaction, including rollback after a flush.
+
+`transitionTo(status)` remains supported. `transitionTo(status, eventDetails)` accepts optional
+safe operational context; callers must not include secrets, request payloads or attachment data.
+Automatic entries use null details. Audit records describe producer lifecycle changes, not
+every broker attempt, attachment change, consumer completion or financial execution.
+
+V1 already created `settlement_audit_log`. V8 renames its FK column to `settlement_event_id`,
+allows absent details and replaces the single-column index with `(settlement_event_id, created_at, id)`.
+Existing rows, IDs, timestamps, the identity sequence and the cascading FK are preserved.
+No old migration changes and no historical entries are synthesized. A legacy settlement's next
+transition records only its actual previous/new status.
+
+`GET /api/v1/settlements/{id}/audit` returns `AuditLogEntry` DTOs ordered by timestamp, then ID.
+It reads producer history independently of the CQRS projection. Mapping occurs in a read-only
+transaction, so `open-in-view: false` remains supported. IDs must be positive int64 values (400);
+missing settlements and settlements without history return the standard 404 error contract.
+
+The aggregate exposes an unmodifiable, ordered list and entries have no public mutation methods.
+This is not a tamper-proof archive: aggregate/database deletes still cascade, and privileged SQL
+can alter data. Retention policies, pagination and additional access controls are outside this
+increment; the endpoint inherits the application's existing security configuration.
+
+Validation: `SettlementEventTest` covers the full transition matrix, details and no-op/rejection
+semantics; `SettlementAuditControllerTest` covers the JSON/error contract. `SettlementAuditIT`
+uses PostgreSQL Testcontainers for REST ingestion/replay, isolation, cascade persistence,
+rollback after flush and audit insertion failure, tied timestamp ordering, legacy records and
+a V7-to-V8 upgrade preserving existing history. Run the complete suite with `./mvnw verify`
+(`.\mvnw.cmd verify` on Windows).
+
+Local validation on 2026-10-07: 145 unit/slice tests and 58 integration tests passed,
+with no failures, errors or skips. The default Testcontainers connection returned HTTP 400
+on this Windows Docker Desktop environment; verification used the active Docker endpoint
+and an explicit client API version, only for the test process (no daemon/security changes):
+
+```powershell
+$env:DOCKER_HOST = docker context inspect --format '{{.Endpoints.docker.Host}}'
+.\mvnw.cmd verify '-Dapi.version=1.44'
+```

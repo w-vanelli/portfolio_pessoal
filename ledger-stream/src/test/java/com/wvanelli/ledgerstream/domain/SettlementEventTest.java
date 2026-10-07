@@ -2,6 +2,11 @@ package com.wvanelli.ledgerstream.domain;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+
+import java.time.ZoneOffset;
+import java.util.List;
 
 import java.util.UUID;
 
@@ -39,6 +44,15 @@ class SettlementEventTest {
         assertThat(event.getUpdatedAt()).isEqualTo(event.getCreatedAt());
         assertThat(event.getAttachments()).isEmpty();
         assertThat(event.getOriginalSettlementId()).isNull();
+        assertThat(event.getAuditLogs()).singleElement().satisfies(entry -> {
+            assertThat(entry.getPreviousStatus()).isNull();
+            assertThat(entry.getNewStatus()).isEqualTo(SettlementStatus.STAGED);
+            assertThat(entry.getEventDetails()).isNull();
+            assertThat(entry.getSettlementEvent()).isSameAs(event);
+            assertThat(entry.getCreatedAt()).isEqualTo(event.getCreatedAt());
+            assertThat(entry.getCreatedAt().getOffset()).isEqualTo(ZoneOffset.UTC);
+        });
+        assertThatThrownBy(() -> event.getAuditLogs().clear()).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
@@ -89,12 +103,14 @@ class SettlementEventTest {
     void shouldAllowSameStateTransition() throws InterruptedException {
         SettlementEvent event = createDefaultEvent(); // STAGED
         var originalUpdatedAt = event.getUpdatedAt();
+        var originalLogs = event.getAuditLogs();
 
         Thread.sleep(5);
 
         event.transitionTo(SettlementStatus.STAGED);
         assertThat(event.getStatus()).isEqualTo(SettlementStatus.STAGED);
         assertThat(event.getUpdatedAt()).isEqualTo(originalUpdatedAt); // Should not update
+        assertThat(event.getAuditLogs()).containsExactlyElementsOf(originalLogs);
     }
 
     @Test
@@ -174,8 +190,13 @@ class SettlementEventTest {
     @DisplayName("transitionTo should reject null status")
     void shouldRejectNullTransition() {
         SettlementEvent event = createDefaultEvent();
+        var originalLogs = event.getAuditLogs();
+        var originalUpdatedAt = event.getUpdatedAt();
         assertThatThrownBy(() -> event.transitionTo(null))
                 .isInstanceOf(NullPointerException.class);
+        assertThat(event.getStatus()).isEqualTo(SettlementStatus.STAGED);
+        assertThat(event.getUpdatedAt()).isEqualTo(originalUpdatedAt);
+        assertThat(event.getAuditLogs()).containsExactlyElementsOf(originalLogs);
     }
 
     @Test
@@ -205,6 +226,69 @@ class SettlementEventTest {
         );
 
         assertThat(event.getOriginalSettlementId()).isNull();
+    }
+
+    @ParameterizedTest
+    @EnumSource(SettlementStatus.class)
+    void shouldAuditExactlyTheAllowedTransitions(SettlementStatus source) {
+        List<SettlementStatus> allowed = switch (source) {
+            case STAGED -> List.of(SettlementStatus.COMMITTED, SettlementStatus.FAILED, SettlementStatus.COMPENSATED);
+            case COMMITTED -> List.of(SettlementStatus.DISPATCHED);
+            case FAILED -> List.of(SettlementStatus.COMPENSATED);
+            case DISPATCHED, COMPENSATED -> List.of();
+        };
+        for (SettlementStatus target : SettlementStatus.values()) {
+            SettlementEvent event = eventAt(source);
+            var before = event.getAuditLogs();
+            var updatedAt = event.getUpdatedAt();
+            if (allowed.contains(target)) {
+                event.transitionTo(target, "Operational transition");
+                assertThat(event.getStatus()).isEqualTo(target);
+                assertThat(event.getAuditLogs()).hasSize(before.size() + 1);
+                var entry = event.getAuditLogs().getLast();
+                assertThat(entry.getPreviousStatus()).isEqualTo(source);
+                assertThat(entry.getNewStatus()).isEqualTo(target);
+                assertThat(entry.getEventDetails()).isEqualTo("Operational transition");
+                assertThat(entry.getSettlementEvent()).isSameAs(event);
+                assertThat(entry.getCreatedAt()).isEqualTo(event.getUpdatedAt());
+                assertThat(entry.getCreatedAt().getOffset()).isEqualTo(ZoneOffset.UTC);
+            } else {
+                if (source == target) {
+                    event.transitionTo(target, "Must not create a log");
+                } else {
+                    assertThatThrownBy(() -> event.transitionTo(target, "Rejected"))
+                            .isInstanceOf(IllegalStateException.class);
+                }
+                assertThat(event.getStatus()).isEqualTo(source);
+                assertThat(event.getUpdatedAt()).isEqualTo(updatedAt);
+                assertThat(event.getAuditLogs()).containsExactlyElementsOf(before);
+            }
+        }
+        SettlementEvent event = eventAt(source);
+        var before = event.getAuditLogs();
+        var updatedAt = event.getUpdatedAt();
+        assertThatThrownBy(() -> event.transitionTo(null, "Rejected"))
+                .isInstanceOf(NullPointerException.class);
+        assertThat(event.getStatus()).isEqualTo(source);
+        assertThat(event.getUpdatedAt()).isEqualTo(updatedAt);
+        assertThat(event.getAuditLogs()).containsExactlyElementsOf(before);
+    }
+
+    @Test
+    void compatibleOverloadShouldNotCopyPayloadIntoDetails() {
+        SettlementEvent event = createDefaultEvent();
+        event.transitionTo(SettlementStatus.COMMITTED);
+        assertThat(event.getAuditLogs()).hasSize(2).allSatisfy(entry ->
+                assertThat(entry.getEventDetails()).isNull());
+    }
+
+    private SettlementEvent eventAt(SettlementStatus status) {
+        SettlementEvent event = createDefaultEvent();
+        if (status == SettlementStatus.DISPATCHED) {
+            event.transitionTo(SettlementStatus.COMMITTED);
+        }
+        event.transitionTo(status);
+        return event;
     }
 
     private SettlementEvent createDefaultEvent() {

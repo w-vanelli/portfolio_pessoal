@@ -22,7 +22,7 @@ tags:
   - name: Settlements
     description: Settlement event ingestion and retrieval
   - name: Audit
-    description: Immutable audit trail inspection for compliance and tracing
+    description: Persisted settlement lifecycle history
   - name: Operations
     description: Administrative and operational maintenance endpoints
 
@@ -198,7 +198,11 @@ paths:
       tags:
         - Audit
       summary: Retrieve settlement audit trail
-      description: Returns the immutable lifecycle history of status changes and dispatch attempts.
+      description: >
+        Returns persisted producer lifecycle entries ordered by timestamp ascending, then ID ascending.
+        New settlements include an initial null-to-STAGED entry. Only actual status changes create
+        further entries; retries without a status change do not. This query does not depend on the
+        consumer projection. Pre-existing settlements are not backfilled.
       parameters:
         - name: id
           in: path
@@ -206,6 +210,7 @@ paths:
           schema:
             type: integer
             format: int64
+            minimum: 1
       responses:
         '200':
           description: Audit log history.
@@ -215,6 +220,18 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/AuditLogEntry'
+        '400':
+          description: Identifier is not a positive int64.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Settlement does not exist or has no recorded audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/admin/reconcile:
     post:
@@ -356,6 +373,7 @@ components:
 
     AuditLogEntry:
       type: object
+      required: [id, settlementId, previousStatus, newStatus, eventDetails, timestamp]
       properties:
         id:
           type: integer
@@ -365,13 +383,18 @@ components:
           format: int64
         previousStatus:
           type: string
+          nullable: true
+          enum: [STAGED, COMMITTED, DISPATCHED, FAILED, COMPENSATED, null]
           example: "STAGED"
         newStatus:
           type: string
+          enum: [STAGED, COMMITTED, DISPATCHED, FAILED, COMPENSATED]
           example: "COMMITTED"
         eventDetails:
           type: string
-          example: "Transactional commit completed; file promoted from staging to permanent storage."
+          nullable: true
+          description: Optional safe operational context. Automatic entries do not copy payloads or attachment metadata.
+          example: null
         timestamp:
           type: string
           format: date-time
