@@ -51,8 +51,7 @@ class SettlementAuditIT extends AbstractIntegrationTest {
 
     @AfterEach
     void cleanUp() {
-        outbox.deleteAll();
-        events.deleteAll();
+        truncateEvents();
     }
 
     @Test

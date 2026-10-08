@@ -53,9 +53,7 @@ public class SettlementIngestionControllerIT extends AbstractIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        outboxRepository.deleteAll();
-        attachmentRepository.deleteAll();
-        eventRepository.deleteAll();
+        truncateEvents();
     }
 
     @Test

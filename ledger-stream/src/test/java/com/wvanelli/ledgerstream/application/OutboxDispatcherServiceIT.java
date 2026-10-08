@@ -40,8 +40,7 @@ class OutboxDispatcherServiceIT extends AbstractMessagingIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        outboxRepository.deleteAll();
-        eventRepository.deleteAll();
+        truncateEvents();
         rabbitAdmin.purgeQueue("ledger.settlement.events", false);
     }
 

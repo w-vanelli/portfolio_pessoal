@@ -23,6 +23,13 @@ public abstract class AbstractMessagingIntegrationTest {
     @Container
     static RabbitMQContainer rabbitmq = new RabbitMQContainer("rabbitmq:3.13-management-alpine");
 
+    @org.springframework.beans.factory.annotation.Autowired
+    protected org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    protected void truncateEvents() {
+        jdbcTemplate.execute("TRUNCATE TABLE settlement_events CASCADE");
+    }
+
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         // Postgres

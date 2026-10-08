@@ -38,6 +38,13 @@ public abstract class AbstractIntegrationTest {
 
     static { POSTGRES.start(); }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    protected org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    protected void truncateEvents() {
+        jdbcTemplate.execute("TRUNCATE TABLE settlement_events CASCADE");
+    }
+
     @DynamicPropertySource
     static void configureDataSource(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);

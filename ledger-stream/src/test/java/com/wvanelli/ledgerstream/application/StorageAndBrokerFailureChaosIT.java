@@ -92,8 +92,7 @@ class StorageAndBrokerFailureChaosIT extends AbstractMessagingIntegrationTest {
     @BeforeEach
     void setUp() {
         projectionRepository.deleteAll();
-        outboxRepository.deleteAll();
-        eventRepository.deleteAll();
+        truncateEvents();
         rabbitAdmin.purgeQueue("ledger.settlement.events", false);
         // Remove any leftover stubs from previous tests
         Mockito.reset(rabbitTemplate);
@@ -104,8 +103,7 @@ class StorageAndBrokerFailureChaosIT extends AbstractMessagingIntegrationTest {
         Mockito.reset(rabbitTemplate);
         rabbitAdmin.purgeQueue("ledger.settlement.events", false);
         projectionRepository.deleteAll();
-        outboxRepository.deleteAll();
-        eventRepository.deleteAll();
+        truncateEvents();
     }
 
     @Test

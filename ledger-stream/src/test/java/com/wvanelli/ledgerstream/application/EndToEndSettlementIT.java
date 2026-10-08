@@ -46,8 +46,7 @@ public class EndToEndSettlementIT extends AbstractMessagingIntegrationTest {
     @AfterEach
     void tearDown() {
         projectionRepository.deleteAll();
-        outboxRepository.deleteAll();
-        eventRepository.deleteAll();
+        truncateEvents();
     }
 
     @Test
